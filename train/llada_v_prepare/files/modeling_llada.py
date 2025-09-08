@@ -1091,12 +1091,12 @@ class LLaDAModel(LLaDAPreTrainedModel):
         if attention_mask is not None:
             causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
             if attention_mask.dim() == 2:
-                # attention_mask 为 1的位置代表要注意到的地方，所以这里要把attention_mask为0的地方也mask掉
+                # Position where attention_mask is 1 represents places to attend to, so we need to mask positions where attention_mask is 0
                 mask_length = attention_mask.shape[-1]
                 padding_mask = causal_mask[..., :mask_length].eq(0.0) * attention_mask[:, None, None, :].eq(0.0)
                 causal_mask[..., :mask_length] = causal_mask[..., :mask_length].masked_fill(padding_mask, min_dtype)
             elif attention_mask.dim() == 4:
-                # attention_mask 为 1的位置代表要注意到的地方，所以这里要把attention_mask为0的地方也mask掉
+                # Position where attention_mask is 1 represents places to attend to, so we need to mask positions where attention_mask is 0
                 # backwards compatibility: we allow passing a 4D attention mask shorter than the input length with
                 # cache. In that case, the 4D attention mask attends to the newest tokens only.
                 if attention_mask.shape[-2] < cache_position[0] + sequence_length:

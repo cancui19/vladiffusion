@@ -82,17 +82,17 @@ def infovqa_process_results(doc, results):
     result = [res.strip() for res in results]
     result = [parse_VWImodel_response(res) for res in result]
 
-    # 确保 gold 是列表形式（兼容单答案和多答案）
+    # Ensure gold is in list format (compatible with single and multiple answers)
     if not isinstance(gold, list):
         gold = [gold]
 
-    # 计算 ANLS 分数（假设 self._metric_fn_list["anls"] 是 ANLS 计算函数）
+    # Calculate ANLS score (assuming self._metric_fn_list["anls"] is the ANLS calculation function)
     anls_score = anls(
         references=gold,
         predictions=result,
     )
 
-    # 如果返回的是字典（如 HuggingFace Evaluate），提取 ANLS 值
+    # If returned is a dictionary (like HuggingFace Evaluate), extract ANLS value
     if isinstance(anls_score, dict):
         anls_score = anls_score["anls"]
 

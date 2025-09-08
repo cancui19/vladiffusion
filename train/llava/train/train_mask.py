@@ -894,9 +894,9 @@ def preprocess_v1(sources, tokenizer: transformers.PreTrainedTokenizer, has_imag
                 target[:] = IGNORE_INDEX
                 print(f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}." f" (ignored)")
  
-        # --- 新增的自定义掩码逻辑 (已修正) ---
-        # 这是您提供的掩码，定义哪些位置需要被忽略
-        # True表示忽略（mask掉），False表示保留
+        # --- New custom mask logic (corrected) ---
+        # This is the mask you provided, defining which positions need to be ignored
+        # True means ignore (mask out), False means keep
         custom_mask_array = np.array([True, False, False, True, False, False, True, False, False, False, False, 
         False, True, False, False, True, True, False, False, True, False, False, True, False, False, False, False, False, 
         True, False, False, True, True, False, False, True, False, False, True, False, False, False, False, False, True, False, 
@@ -924,37 +924,37 @@ def preprocess_v1(sources, tokenizer: transformers.PreTrainedTokenizer, has_imag
         #          False, False, True, False, False, True])
         
         
-        # 将布尔数组转换为PyTorch张量
+        # Convert boolean array to PyTorch tensor
         custom_mask_tensor = torch.from_numpy(custom_mask_array).to(device=target.device, dtype=torch.bool)
         
-        # 定位模型回答部分的起始点
-        # 在单轮对话中，这个位置就是 instruction_len 之后
-        # 注意：由于之前的代码已经更新了cur_len，所以这里我们用回最初的instruction_len计算
-        # 但更稳妥的方式是直接使用 `cur_len - round_len + instruction_len` (如果有多轮对话)
-        # 对于单轮对话，这个起点就是 `total_len - (len of answer)`
-        # 为了简化和确保正确性，我们假设在单轮对话后，cur_len已经指向了序列末尾
-        # 因此，我们需要从 `total_len` 回溯回答的长度
-        # 但一个更直接的方法是找到第一个非-100的位置
+        # Locate the starting point of the model's answer section
+        # In single-turn conversation, this position is after instruction_len
+        # Note: Since the previous code has updated cur_len, we use the original instruction_len calculation here
+        # But a more stable approach is to directly use `cur_len - round_len + instruction_len` (if there are multiple rounds)
+        # For single-turn conversation, this starting point is `total_len - (len of answer)`
+        # To simplify and ensure correctness, we assume that after single-turn conversation, cur_len already points to the end of the sequence
+        # Therefore, we need to trace back the answer length from `total_len`
+        # But a more direct method is to find the first non-100 position
         
-        # 找到第一个非-100的标签位置，作为回答的开始
+        # Find the first non-100 label position as the start of the answer
         answer_start_index = (target != IGNORE_INDEX).nonzero(as_tuple=True)[0]
         if len(answer_start_index) > 0:
             start_pos = answer_start_index[0]
             
-            # 获取回答部分的切片
+            # Get the slice of the answer part
             target_slice = target[start_pos:]
             
-            # --- 新增的断言 ---
-            # 验证回答部分的长度是否与自定义掩码的长度完全一致
+            # --- New assertion ---
+            # Verify that the answer part length exactly matches the custom mask length
             assert len(target_slice) == len(custom_mask_tensor), \
-                f"回答部分长度 ({len(target_slice)}) 与自定义掩码长度 ({len(custom_mask_tensor)}) 不匹配!"
-            # --- 断言结束 ---
+                f"Answer part length ({len(target_slice)}) does not match custom mask length ({len(custom_mask_tensor)})!"
+            # --- End of assertion ---
             
-            # 在回答部分的切片上应用掩码
-            # 由于长度已经断言过，所以不再需要min()来取较小值
+            # Apply mask on the answer part slice
+            # Since the length has been asserted, we no longer need min() to take the smaller value
             target_slice[custom_mask_tensor] = IGNORE_INDEX
- 
-        # --- 掩码逻辑结束 ---
+
+        # --- End of mask logic ---
  
     return dict(
         input_ids=input_ids,

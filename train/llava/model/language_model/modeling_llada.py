@@ -1692,16 +1692,16 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                         if is_confident.sum() < num_transfer_tokens[0, i]:
                             is_highest = torch.zeros_like(confidence, dtype=torch.bool)
                             for j in range(confidence.shape[0]):
-                                num_available = current_mask[j].sum().item()  # 当前可用的 [MASK] 数量
-                                k = min(num_transfer_tokens[j, i], num_available)  # 确保 k 不超过可用数量
+                                num_available = current_mask[j].sum().item()  # Current available [MASK] count
+                                k = min(num_transfer_tokens[j, i], num_available)  # Ensure k does not exceed available count
                                 if k > 0:
-                                    _, select_index = torch.topk(confidence[j], k=k)  # 现在 k 总是 <= 有效元素数量
+                                    _, select_index = torch.topk(confidence[j], k=k)  # Now k is always <= valid element count
                                     is_highest[j, select_index] = True
                             transfer_index = is_highest
                     else: # Fallback to top-k for low_confidence or if threshold is not met
                         num_to_transfer = num_transfer_tokens[0, i]
                         if num_to_transfer > 0:
-                            # 确保不超过当前mask的数量
+                            # Ensure not exceeding current mask count
                             num_available = current_mask.sum().item()
                             k = min(num_to_transfer, num_available)
                             if k > 0:
