@@ -1,4 +1,5 @@
 import os
+from dotenv import load_dotenv
 import numpy as np
 from math import atan2
 import json
@@ -10,17 +11,19 @@ TTL_LEN = OBS_LEN + FUT_LEN
 from nuscenes import NuScenes
 from nuscenes.utils.splits import create_splits_scenes
 
+load_dotenv()
+
 VERSION = 'v1.0-trainval'
-DATAROOT = '/scratch/gilbreth/cancui/data/nuscenes/full'
+DATAROOT = os.getenv("NUSCENES_ROOT")
 # output dir（ train / val）
 PROMPT_TYPE = ["long", "short"][0]
 OUTPUT_TEXT = True
 if OUTPUT_TEXT:
-    OUTPUT_JSON_TRAIN = f"/scratch/gilbreth/jmingyan/project/Qwen2-VL-Finetune/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_train.json"
-    OUTPUT_JSON_VAL   = f"/scratch/gilbreth/jmingyan/project/Qwen2-VL-Finetune/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_val.json"
+    OUTPUT_JSON_TRAIN = f"{DATAROOT}nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_train.json"
+    OUTPUT_JSON_VAL   = f"{DATAROOT}nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_val.json"
 else:
-    OUTPUT_JSON_TRAIN = f"/scratch/gilbreth/jmingyan/project/Qwen2-VL-Finetune/data/nuscenes_waypoint_{PROMPT_TYPE}_prompt_train.json"
-    OUTPUT_JSON_VAL   = f"/scratch/gilbreth/jmingyan/project/Qwen2-VL-Finetune/data/nuscenes_waypoint_{PROMPT_TYPE}_prompt_val.json"
+    OUTPUT_JSON_TRAIN = f"/{DATAROOT}/nuscenes_waypoint_{PROMPT_TYPE}_prompt_train.json"
+    OUTPUT_JSON_VAL   = f"/{DATAROOT}/nuscenes_waypoint_{PROMPT_TYPE}_prompt_val.json"
 
 nusc = NuScenes(version=VERSION, dataroot=DATAROOT, verbose=True)
 scenes = nusc.scene
