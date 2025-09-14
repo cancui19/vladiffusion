@@ -16,7 +16,7 @@ from nuscenes.utils.geometry_utils import view_points
 from nuscenes.can_bus.can_bus_api import NuScenesCanBus
 from nuscenes.utils.splits import create_splits_scenes
 
-GET_IMG_DATA = True #  set to false for ad_mlp
+GET_IMG_DATA = False #  set to false for ad_mlp
 
 # helpers for debugging arbitrary python objects
 def get_type_tree(data):
