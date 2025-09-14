@@ -133,8 +133,6 @@ class PointEmbedding(nn.Module):
         Returns:
             (B, D) tensor of embeddings
         """
-        B = X.shape[0]
-
         distances = torch.cdist(X.unsqueeze(1), self.C.unsqueeze(0), p=2).squeeze(1)  # (B, num_clusters)
         knn_dists, knn_indices = torch.topk(distances, self.K, largest=False, dim=1)  # (B, K)
 
@@ -146,17 +144,19 @@ class PointEmbedding(nn.Module):
         return weighted_embeddings
     
 class EmbeddingDecoder(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=128):
+    def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=64):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
         self.D = D
         self.hidden_dim = hidden_dim
 
+        self.linear = nn.Linear(D, 2)
+
         self.mlp = nn.Sequential(
             nn.Linear(D, hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
+            nn.SiLU(),
             nn.Linear(hidden_dim, 2)
         )
 
@@ -166,9 +166,35 @@ class EmbeddingDecoder(nn.Module):
         Returns:
             (B, 2) tensor of reconstructed points
         """
-        recon_points = self.mlp(embeddings)  # (B, 2)
+        recon_points = self.linear(embeddings) + self.mlp(embeddings)  # (B, 2)
         return recon_points
 
+@torch.no_grad()
+def geometry_loss(embeddings: torch.Tensor, points: torch.Tensor,
+                  n_pairs=1024, detach_scales=True):
+    """
+    embeddings: (B, D)
+    points: (B, 2)
+    """
+    B = embeddings.size(0)
+    if B < 2:
+        return embeddings.new_tensor(0.0)
+
+    i = torch.randint(0, B, (n_pairs,), device=embeddings.device)
+    j = torch.randint(0, B, (n_pairs,), device=embeddings.device)
+
+    dE  = torch.norm(embeddings[i] - embeddings[j], dim=1)
+    dUV = torch.norm(points[i] - points[j], dim=1)
+
+    # robust scaling (median)
+    scaleE  = dE.median() + 1e-9
+    scaleUV = dUV.median() + 1e-9
+    if detach_scales:
+        scaleE = scaleE.detach()
+        scaleUV = scaleUV.detach()
+
+    return ((dE / scaleE - dUV / scaleUV) ** 2).mean()
+    
 def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='cuda'):
     dataset = torch.utils.data.TensorDataset(torch.from_numpy(points).float())
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
@@ -178,33 +204,53 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
     model.decoder = EmbeddingDecoder(kmeans).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    mse_loss = nn.MSELoss()
+    mse_loss_fn = nn.MSELoss()
 
     for epoch in range(num_epochs):
         total_loss = 0.0
+        total_recon = 0.0
+        total_geom = 0.0
         grad_norms = []
-        for batch in dataloader:
-            
-        
+
+        # freeze decoder for first 10 epochs
+        if epoch < 10:
+            for p in model.decoder.parameters(): p.requires_grad = False
+        else:
+            for p in model.decoder.parameters(): p.requires_grad = True
+
+        for batch in dataloader:        
             x = batch[0].to(device)  # (B, 2)
 
             optimizer.zero_grad()
             embeddings = model.embedding(x)  # (B, D)
             recon_points = model.decoder(embeddings)  # (B, 2)
 
-            loss = mse_loss(recon_points, x)
+            mse_loss = mse_loss_fn(recon_points, x)
+            geom_loss = geometry_loss(embeddings, x, n_pairs=2048)
+            loss = mse_loss + 0.1 * geom_loss
             loss.backward()
 
             grad_norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0))
-            
             optimizer.step()
 
-            total_loss += loss.item() * x.size(0)
+            bs = x.size(0)
+            total_loss += loss.item() * bs
+            total_recon += mse_loss.item() * bs
+            total_geom += geom_loss.item() * bs
 
-        avg_loss = total_loss / len(dataset)
+        denom = len(dataset)
+        avg_loss = total_loss / denom
+        avg_recon = total_recon / denom
+        avg_geom = total_geom / denom
         avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.6f}, GradNorm: {avg_grad_norm:.6f}")
-        wandb.log({"epoch": epoch+1, "loss": avg_loss, "grad_norm": avg_grad_norm})
+        print(f"Epoch {epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | grad {avg_grad_norm:.4f}")
+        wandb.log({
+            "epoch": epoch+1,
+            "loss": avg_loss,
+            "loss_recon": avg_recon,
+            "loss_geom": avg_geom,
+            "grad_norm": avg_grad_norm
+        })
 
     return model
 
