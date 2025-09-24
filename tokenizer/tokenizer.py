@@ -15,6 +15,8 @@ import tqdm
 
 from nuscenes_dataset import NuScenesDataset
 
+torch.manual_seed(42)
+
 
 def get_xy_points(dataset: NuScenesDataset):
     """
@@ -119,7 +121,7 @@ def preprocess(points: np.ndarray, kmeans: MiniBatchKMeans):
     
 
 class PointEmbedding(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, K=16, dropout=0.01):
+    def __init__(self, kmeans: MiniBatchKMeans, D=128, K=16, dropout=0.00):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
         self.dropout = nn.Dropout(dropout)
@@ -147,7 +149,7 @@ class PointEmbedding(nn.Module):
         return self.dropout(weighted_embeddings)
     
 class EmbeddingDecoder(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=64):
+    def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=96):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
         self.D = D
@@ -244,7 +246,7 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
         total_loss = 0.0
         total_recon = 0.0
         total_geom = 0.0
-        total_triplet = 0.0
+        # total_triplet = 0.0
         grad_norms = []
 
         # freeze decoder for first 10 epochs
@@ -263,11 +265,11 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             mse_loss = mse_loss_fn(recon_points, x)
             geom_loss = geometry_loss(embeddings, x, n_pairs=2048)
             
-            with torch.no_grad():
-                labels = assign_batch_labels(x, model.embedding.C)  # (B,)
-            triplet_loss = supervised_contrastive_loss(embeddings, labels)
+            # with torch.no_grad():
+            #     labels = assign_batch_labels(x, model.embedding.C)  # (B,)
+            # triplet_loss = supervised_contrastive_loss(embeddings, labels)
             
-            loss = mse_loss + 0.1 * geom_loss + 0.1 * triplet_loss
+            loss = mse_loss + 0.1 * geom_loss # + 0.1 * triplet_loss
             loss.backward()
 
             grad_norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0))
@@ -277,21 +279,21 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             total_loss += loss.item() * bs
             total_recon += mse_loss.item() * bs
             total_geom += geom_loss.item() * bs
-            total_triplet += triplet_loss.item() * bs
+            # total_triplet += triplet_loss.item() * bs
 
         denom = len(dataset)
         avg_loss = total_loss / denom
         avg_recon = total_recon / denom
         avg_geom = total_geom / denom
-        avg_triplet = total_triplet / denom
+        # avg_triplet = total_triplet / denom
         avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0
-        print(f"{epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | contrast {avg_triplet:.6f} | grad {avg_grad_norm:.4f}")
+        print(f"{epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | grad {avg_grad_norm:.4f}")
         wandb.log({
             "epoch": epoch+1,
             "loss": avg_loss,
             "loss_recon": avg_recon,
             "loss_geom": avg_geom,
-            "loss_triplet": avg_triplet,
+            # "loss_triplet": avg_triplet,
             "grad_norm": avg_grad_norm,
         })
 
