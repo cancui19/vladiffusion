@@ -5,6 +5,7 @@ import torch
 import math
 from torch.nn import functional as F
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
@@ -118,14 +119,16 @@ def preprocess(points: np.ndarray, kmeans: MiniBatchKMeans):
     
 
 class PointEmbedding(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, K=16):
+    def __init__(self, kmeans: MiniBatchKMeans, D=128, K=16, dropout=0.01):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
+        self.dropout = nn.Dropout(dropout)
 
         self.D = D
         self.E = nn.Parameter(nn.init.orthogonal_(torch.empty(self.C.shape[0], self.D)))  # (num_clusters, D)
         self.K = K
         self.tau = 1.0
+
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -141,7 +144,7 @@ class PointEmbedding(nn.Module):
         weights = weights.unsqueeze(2)  # (B, K, 1)
         weighted_embeddings = (embeddings * weights).sum(dim=1)  # (B, D)
 
-        return weighted_embeddings
+        return self.dropout(weighted_embeddings)
     
 class EmbeddingDecoder(nn.Module):
     def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=64):
@@ -194,6 +197,37 @@ def geometry_loss(embeddings: torch.Tensor, points: torch.Tensor,
         scaleUV = scaleUV.detach()
 
     return ((dE / scaleE - dUV / scaleUV) ** 2).mean()
+
+def assign_batch_labels(x: torch.Tensor, centers: torch.Tensor) -> torch.Tensor:
+    """
+    x: (B, 2) points (already normalized)
+    centers: (K, 2)
+    Returns: (B,) cluster index per point
+    """
+    # (B, K)
+    dists = torch.cdist(x, centers, p=2)
+    return dists.argmin(dim=1)
+
+def supervised_contrastive_loss(z, labels, temperature=0.07, eps=1e-12):
+    z = F.normalize(z, dim=1)
+    logits = torch.matmul(z, z.T) / temperature
+
+    logits_mask = torch.ones_like(logits, dtype=torch.bool)
+    logits_mask.fill_diagonal_(False)
+
+    labels = labels.unsqueeze(1)
+    positive_mask = (labels == labels.T) & logits_mask
+    neg_mask = logits_mask & ~positive_mask
+
+    # log-softmax over all non-self pairs
+    logits = logits - logits.max(dim=1, keepdim=True).values.detach()
+    exp_logits = torch.exp(logits) * logits_mask
+    log_prob = logits - torch.log(exp_logits.sum(dim=1, keepdim=True) + eps)
+
+    pos_counts = positive_mask.sum(dim=1)
+    valid = pos_counts > 0
+    mean_log_prob_pos = (positive_mask * log_prob).sum(dim=1) / pos_counts.clamp_min(1)
+    return -(mean_log_prob_pos[valid]).mean()
     
 def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='cuda'):
     dataset = torch.utils.data.TensorDataset(torch.from_numpy(points).float())
@@ -210,6 +244,7 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
         total_loss = 0.0
         total_recon = 0.0
         total_geom = 0.0
+        total_triplet = 0.0
         grad_norms = []
 
         # freeze decoder for first 10 epochs
@@ -227,7 +262,12 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
 
             mse_loss = mse_loss_fn(recon_points, x)
             geom_loss = geometry_loss(embeddings, x, n_pairs=2048)
-            loss = mse_loss + 0.1 * geom_loss
+            
+            with torch.no_grad():
+                labels = assign_batch_labels(x, model.embedding.C)  # (B,)
+            triplet_loss = supervised_contrastive_loss(embeddings, labels)
+            
+            loss = mse_loss + 0.1 * geom_loss + 0.1 * triplet_loss
             loss.backward()
 
             grad_norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0))
@@ -237,19 +277,22 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             total_loss += loss.item() * bs
             total_recon += mse_loss.item() * bs
             total_geom += geom_loss.item() * bs
+            total_triplet += triplet_loss.item() * bs
 
         denom = len(dataset)
         avg_loss = total_loss / denom
         avg_recon = total_recon / denom
         avg_geom = total_geom / denom
+        avg_triplet = total_triplet / denom
         avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0
-        print(f"Epoch {epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | grad {avg_grad_norm:.4f}")
+        print(f"{epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | contrast {avg_triplet:.6f} | grad {avg_grad_norm:.4f}")
         wandb.log({
             "epoch": epoch+1,
             "loss": avg_loss,
             "loss_recon": avg_recon,
             "loss_geom": avg_geom,
-            "grad_norm": avg_grad_norm
+            "loss_triplet": avg_triplet,
+            "grad_norm": avg_grad_norm,
         })
 
     return model
