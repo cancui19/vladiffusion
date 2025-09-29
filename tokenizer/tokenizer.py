@@ -236,8 +236,9 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
     model = nn.Module()
-    model.embedding = PointEmbedding(kmeans, K=1).to(device)
-    model.decoder = EmbeddingDecoder(kmeans).to(device)
+    embedding_dimension = 128
+    model.embedding = PointEmbedding(kmeans, K=1, D=embedding_dimension).to(device)
+    model.decoder = EmbeddingDecoder(kmeans, D=embedding_dimension).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     mse_loss_fn = nn.MSELoss()
