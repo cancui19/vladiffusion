@@ -5,8 +5,56 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.pyplot as plt
 from sklearn.neighbors import KDTree
+import os
+from dotenv import load_dotenv
+from nuscenes_dataset import NuScenesDataset
+from pyquaternion import Quaternion
 
 from tokenizer import viz
+
+def get_xy_points_by_horizon(dataset, horizons=(1, 2, 3)):
+    hz = dataset.future_hz
+    idx_for = {t: max(0, int(round(t * hz)) - 1) for t in horizons}
+    buckets = {t: [] for t in horizons}
+
+    for sample in tqdm(dataset.samples):
+        traj_world = dataset._get_future_trajectory(sample)
+        if traj_world.size == 0:
+            continue
+
+        lidar_sd = dataset.nusc.get("sample_data", sample["data"]["LIDAR_TOP"])
+        ego_pose = dataset.nusc.get("ego_pose", lidar_sd["ego_pose_token"])
+        t0 = np.asarray(ego_pose["translation"])
+        R_world_to_ego = Quaternion(ego_pose["rotation"]).inverse.rotation_matrix
+        traj_local = (R_world_to_ego @ (traj_world - t0).T).T.astype(np.float32)
+
+        for t, idx in idx_for.items():
+            idx = min(idx, traj_local.shape[0] - 1)  # clamp if the track is shorter
+            buckets[t].append(traj_local[idx, :2])
+
+    return {t: np.vstack(points).astype(np.float32) for t, points in buckets.items() if points}
+
+
+def save_data():
+    load_dotenv()
+
+    VERSION = 'v1.0-trainval'
+    DATAROOT = os.getenv("NUSCENES_ROOT")
+    dataset = NuScenesDataset(nuscenes_path=DATAROOT, version=VERSION, split='train', future_seconds=3, future_hz=2, get_img_data=False)
+    xy_by_t = get_xy_points_by_horizon(dataset)
+
+    for t, arr in xy_by_t.items():
+        np.save(f"points_xy_{t}s.npy", arr)
+        plt.figure(figsize=(8, 8))
+        plt.scatter(arr[:, 0], arr[:, 1], s=0.1, alpha=0.5)
+        plt.title(f"Future Waypoints @ {t}s")
+        plt.xlabel("X (meters)")
+        plt.ylabel("Y (meters)")
+        plt.axis("equal")
+        plt.grid(True)
+        plt.savefig(f"future_waypoints_{t}s.png", dpi=300)
+        plt.close()
+        print(f"Saved {len(arr)} points for {t}s horizon")
 
 def get_clusters(points: np.ndarray, num_clusters=2048):
     nbrs = NearestNeighbors(n_neighbors=16).fit(points)
@@ -183,32 +231,36 @@ def hierarchical_density_clustering(points, num_clusters=4096, hierarchy_levels=
     
     return MockKMeans(final_centers)
 
-points = np.load("points_xy.npy")
-kmeans = get_clusters(points, num_clusters=4096)
-# kmeans = farthest_point_clustering(points, num_clusters=4096)
-# kmeans = get_clusters_with_outlier_removal(points, num_clusters=4096, outlier_percentile=98)
-# kmeans = hierarchical_density_clustering(points, num_clusters=4096, hierarchy_levels=3)
-viz(kmeans, points)
-centers = torch.from_numpy(kmeans.cluster_centers_).float()
+if __name__ == "__main__":
+    save_data()
+
+    points = np.load("points_xy_1s.npy")
+    print(f"Loaded {len(points)} points")
+    kmeans = get_clusters(points, num_clusters=4096)
+    # kmeans = farthest_point_clustering(points, num_clusters=4096)
+    # kmeans = get_clusters_with_outlier_removal(points, num_clusters=4096, outlier_percentile=98)
+    # kmeans = hierarchical_density_clustering(points, num_clusters=4096, hierarchy_levels=3)
+    viz(kmeans, points)
+    centers = torch.from_numpy(kmeans.cluster_centers_).float()
 
 
-# Process in batches to avoid OOM
-batch_size = 10000
-all_dists = []
+    # Process in batches to avoid OOM
+    batch_size = 10000
+    all_dists = []
 
-for i in tqdm(range(0, len(points), batch_size)):
-    batch_pts = torch.from_numpy(points[i:i+batch_size]).float()
-    batch_dists = torch.cdist(batch_pts, centers, p=2).min(dim=1)[0].numpy()
-    all_dists.append(batch_dists)
+    for i in tqdm(range(0, len(points), batch_size)):
+        batch_pts = torch.from_numpy(points[i:i+batch_size]).float()
+        batch_dists = torch.cdist(batch_pts, centers, p=2).min(dim=1)[0].numpy()
+        all_dists.append(batch_dists)
 
-dists = np.concatenate(all_dists)
+    dists = np.concatenate(all_dists)
 
-plt.figure(figsize=(8, 6))
-plt.hist(dists, bins=1500, alpha=0.7)
-plt.xlabel("Distance to nearest codebook center")
-plt.ylabel("Count")
-plt.title("Distribution of distances to codebook")
-plt.savefig("imgs/codebook_distance_histogram.png", dpi=500)
+    plt.figure(figsize=(8, 6))
+    plt.hist(dists, bins=1500, alpha=0.7)
+    plt.xlabel("Distance to nearest codebook center")
+    plt.ylabel("Count")
+    plt.title("Distribution of distances to codebook")
+    plt.savefig("imgs/codebook_distance_histogram.png", dpi=500)
 
-print(f"Mean distance to nearest center: {dists.mean()}")
-print(f"Median distance to nearest center: {np.median(dists)}")
+    print(f"Mean distance to nearest center: {dists.mean()}")
+    print(f"Median distance to nearest center: {np.median(dists)}")
