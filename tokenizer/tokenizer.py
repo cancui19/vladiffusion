@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
 import wandb
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
 
 import tqdm
 
@@ -240,14 +242,15 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
     model.decoder = EmbeddingDecoder(kmeans, D=embedding_dimension).to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.75, patience=10)
+
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
     mse_loss_fn = nn.MSELoss()
 
     for epoch in range(num_epochs):
         total_loss = 0.0
         total_recon = 0.0
         total_geom = 0.0
-        # total_triplet = 0.0
+        total_contrastive = 0.0
         grad_norms = []
 
         # freeze decoder for first 10 epochs
@@ -261,16 +264,25 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
 
             # Here, embeddings --> decoder can go through soft assignment, but geom loss is calculated on hard assignments
             optimizer.zero_grad()
-            embeddings = model.embedding(x, K=1)  # (B, D)
-            # embeddings_eval = model.embedding(x, K=1)  # (B, D)
+            # make it easier to learn a useful embedding in the beginning
+            # K = 16 if epoch < 20 else 1
+            K = max(1, 2 ** max(0, 5 - epoch // 2)) # goes from 16 to 1 in first 10 epochs
+            embeddings = model.embedding(x, K=K)  # (B, D)
             recon_points = model.decoder(embeddings)  # (B, 2)
 
             mse_loss = mse_loss_fn(recon_points, x)
-            geom_loss = geometry_loss(embeddings, x, n_pairs=2048)          
+            geom_loss = geometry_loss(embeddings, x, n_pairs=4096)
+            
+            # Compute contrastive loss
+            labels = assign_batch_labels(x, model.embedding.C)
+            contrastive_loss = supervised_contrastive_loss(embeddings, labels, temperature=0.07)
+            
+            # Combine losses with warmup for contrastive loss
+            # constrasive_weight --> goes from 0 to 0.5 in first 10 epochs
+            contrastive_weight = min(0.5, 0.05 * (epoch / 10))
 
-            # scale down geom loss 
-            # optimize only wrt reconstruction loss for now
-            loss = mse_loss # + (0.1 - 0.0001 * epoch//2) * geom_loss # + 0.1 * triplet_loss
+            loss = mse_loss # NOTE: just mse
+            #loss = mse_loss + 0.1* geom_loss + contrastive_weight * contrastive_loss
             loss.backward()
 
             grad_norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0))
@@ -280,24 +292,24 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             total_loss += loss.item() * bs
             total_recon += mse_loss.item() * bs
             total_geom += geom_loss.item() * bs
-            # total_triplet += triplet_loss.item() * bs
+            total_contrastive += contrastive_loss.item() * bs
 
         denom = len(dataset)
         avg_loss = total_loss / denom
         avg_recon = total_recon / denom
         avg_geom = total_geom / denom
-        # avg_triplet = total_triplet / denom
+        avg_contrastive = total_contrastive / denom
         avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0
-        print(f"{epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | grad {avg_grad_norm:.4f} | lr {optimizer.param_groups[0]['lr']:.2e}")
+        print(f"{epoch+1}/{num_epochs} | total {avg_loss:.6f} | recon {avg_recon:.6f} | geom {avg_geom:.6f} | contrastive {avg_contrastive:.6f} | grad {avg_grad_norm:.4f} | lr {optimizer.param_groups[0]['lr']:.2e}")
         wandb.log({
             "epoch": epoch+1,
             "loss": avg_loss,
             "loss_recon": avg_recon,
             "loss_geom": avg_geom,
-            # "loss_triplet": avg_triplet,
+            "loss_contrastive": avg_contrastive,
             "grad_norm": avg_grad_norm,
         })
-        scheduler.step(avg_loss)
+        scheduler.step()
 
     return model
 
@@ -312,6 +324,6 @@ if __name__ == "__main__":
 
     # train
     wandb.init(project="vladiffusion", name="tokenizer_training_3s")
-    model = train_loop(points_normalized, kmeans, num_epochs=100, batch_size=512, lr=1e-5, device='cuda')
+    model = train_loop(points_normalized, kmeans, num_epochs=100, batch_size=512, lr=1e-4, device='cuda')
     torch.save(model.state_dict(), "tokenizer_model.pth")
     wandb.finish()
