@@ -5,12 +5,11 @@ import torch
 import math
 from torch.nn import functional as F
 import torch.nn as nn
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
 import wandb
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 import tqdm
@@ -123,7 +122,7 @@ def preprocess(points: np.ndarray, kmeans: MiniBatchKMeans):
     
 
 class PointEmbedding(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, dropout=0.00):
+    def __init__(self, kmeans: MiniBatchKMeans, D=4096, dropout=0.00):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
         self.dropout = nn.Dropout(dropout)
@@ -150,7 +149,7 @@ class PointEmbedding(nn.Module):
         return self.dropout(weighted_embeddings)
     
 class EmbeddingDecoder(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=128, hidden_dim=96):
+    def __init__(self, kmeans: MiniBatchKMeans, D=4096, hidden_dim=256):
         super().__init__()
         self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
         self.D = D
@@ -237,13 +236,13 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
     model = nn.Module()
-    embedding_dimension = 128
+    embedding_dimension = 4096
     model.embedding = PointEmbedding(kmeans, D=embedding_dimension).to(device)
     model.decoder = EmbeddingDecoder(kmeans, D=embedding_dimension).to(device)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=2)
+    scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=5e-7)
     mse_loss_fn = nn.MSELoss()
 
     for epoch in range(num_epochs):
@@ -266,7 +265,7 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             optimizer.zero_grad()
             # make it easier to learn a useful embedding in the beginning
             # K = 16 if epoch < 20 else 1
-            K = max(1, 2 ** max(0, 5 - epoch // 2)) # goes from 16 to 1 in first 10 epochs
+            K = max(1, 2 ** max(0, 5 - epoch // 10)) # goes from 16 to 1 in first 50 epochs
             embeddings = model.embedding(x, K=K)  # (B, D)
             recon_points = model.decoder(embeddings)  # (B, 2)
 
@@ -281,8 +280,9 @@ def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='
             # constrasive_weight --> goes from 0 to 0.5 in first 10 epochs
             contrastive_weight = min(0.5, 0.05 * (epoch / 10))
 
-            loss = mse_loss # NOTE: just mse
-            #loss = mse_loss + 0.1* geom_loss + contrastive_weight * contrastive_loss
+            # loss = mse_loss # NOTE: just mse
+            # de-weight geom and constrastive losses heavily
+            loss = mse_loss + (0.01 * geom_loss) + (contrastive_weight * 0.01 * contrastive_loss)
             loss.backward()
 
             grad_norms.append(torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0))
@@ -324,6 +324,6 @@ if __name__ == "__main__":
 
     # train
     wandb.init(project="vladiffusion", name="tokenizer_training_3s")
-    model = train_loop(points_normalized, kmeans, num_epochs=100, batch_size=512, lr=1e-4, device='cuda')
+    model = train_loop(points_normalized, kmeans, num_epochs=100, batch_size=4096, lr=1.5e-4, device='cuda')
     torch.save(model.state_dict(), "tokenizer_model.pth")
     wandb.finish()
