@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import os
 import wandb
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from typing import Optional, Tuple, Union
 
 
 import tqdm
@@ -121,23 +122,42 @@ def preprocess(points: np.ndarray, kmeans: MiniBatchKMeans):
     return points_normalized, kmeans, (scale, translate_x, translate_y)
     
 
+def _as_centers(kmeans_or_centers: Union[MiniBatchKMeans, np.ndarray, torch.Tensor]) -> np.ndarray:
+    """
+    Utility to unwrap MiniBatchKMeans objects into a centers array while supporting
+    direct numpy / torch inputs.
+    """
+    if isinstance(kmeans_or_centers, MiniBatchKMeans):
+        centers = kmeans_or_centers.cluster_centers_
+    elif isinstance(kmeans_or_centers, torch.Tensor):
+        centers = kmeans_or_centers.detach().cpu().numpy()
+    else:
+        centers = np.asarray(kmeans_or_centers)
+    if centers.ndim != 2 or centers.shape[1] != 2:
+        raise ValueError(f"Expected centers to have shape (N, 2), got {centers.shape}")
+    return centers.astype(np.float32)
+
+
 class PointEmbedding(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=4096, dropout=0.00):
+    def __init__(self, kmeans_or_centers: Union[MiniBatchKMeans, np.ndarray, torch.Tensor],
+                 D: int = 4096, dropout: float = 0.00, tau: float = 1.0):
         super().__init__()
-        self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
+        centers = _as_centers(kmeans_or_centers)
+        self.register_buffer("C", torch.as_tensor(centers, dtype=torch.float32))  # (num_clusters, 2)
         self.dropout = nn.Dropout(dropout)
 
         self.D = D
         self.E = nn.Parameter(nn.init.orthogonal_(torch.empty(self.C.shape[0], self.D)))  # (num_clusters, D)
-        self.tau = 1.0
+        self.tau = tau
 
-
-    def forward(self, X: torch.Tensor, K: int) -> torch.Tensor:
+    def forward(self, X: torch.Tensor, K: int = 1, return_indices: bool = False):
         """
         X: (B, 2) tensor of points
         Returns:
             (B, D) tensor of embeddings
         """
+        if K > self.C.shape[0]:
+            raise ValueError(f"K={K} exceeds number of centers ({self.C.shape[0]}).")
         distances = torch.cdist(X.unsqueeze(1), self.C.unsqueeze(0), p=2).squeeze(1)  # (B, num_clusters)
         knn_dists, knn_indices = torch.topk(distances, K, largest=False, dim=1)  # (B, K)
 
@@ -146,12 +166,24 @@ class PointEmbedding(nn.Module):
         weights = weights.unsqueeze(2)  # (B, K, 1)
         weighted_embeddings = (embeddings * weights).sum(dim=1)  # (B, D)
 
-        return self.dropout(weighted_embeddings)
+        output = self.dropout(weighted_embeddings)
+        if return_indices:
+            return output, knn_indices[:, 0]
+        return output
+
+    def nearest_indices(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Returns the nearest (hard) center index for each input point.
+        """
+        distances = torch.cdist(X, self.C, p=2)
+        return distances.argmin(dim=1)
     
 class EmbeddingDecoder(nn.Module):
-    def __init__(self, kmeans: MiniBatchKMeans, D=4096, hidden_dim=256):
+    def __init__(self, kmeans_or_centers: Union[MiniBatchKMeans, np.ndarray, torch.Tensor],
+                 D: int = 4096, hidden_dim: int = 256):
         super().__init__()
-        self.register_buffer("C", torch.as_tensor(kmeans.cluster_centers_, dtype=torch.float32))  # (num_clusters, 2)
+        centers = _as_centers(kmeans_or_centers)
+        self.register_buffer("C", torch.as_tensor(centers, dtype=torch.float32))  # (num_clusters, 2)
         self.D = D
         self.hidden_dim = hidden_dim
 
@@ -173,6 +205,134 @@ class EmbeddingDecoder(nn.Module):
         """
         recon_points = self.linear(embeddings) + self.mlp(embeddings)  # (B, 2)
         return recon_points
+
+
+class PointTokenizer(nn.Module):
+    """
+    Combines the embedding/decoder stack with geometry utilities so the tokenizer
+    can be used without explicitly materialising the k-means centroids or
+    normalization transforms outside the module.
+    """
+
+    def __init__(
+        self,
+        kmeans_or_centers: Union[MiniBatchKMeans, np.ndarray, torch.Tensor],
+        D: int = 4096,
+        dropout: float = 0.0,
+        hidden_dim: int = 256,
+        transform: Optional[Tuple[float, float, float]] = None,
+        tau: float = 1.0,
+    ):
+        super().__init__()
+        centers = _as_centers(kmeans_or_centers)
+        if transform is None:
+            transform = (1.0, 0.0, 0.0)
+        scale, translate_x, translate_y = transform
+        self.register_buffer("scale", torch.as_tensor(scale, dtype=torch.float32))
+        self.register_buffer("translate", torch.as_tensor([translate_x, translate_y], dtype=torch.float32))
+
+        self.embedding = PointEmbedding(centers, D=D, dropout=dropout, tau=tau)
+        self.decoder = EmbeddingDecoder(centers, D=D, hidden_dim=hidden_dim)
+
+    @property
+    def centers(self) -> torch.Tensor:
+        return self.embedding.C
+
+    def _ensure_point_tensor(self, xy: Union[np.ndarray, torch.Tensor, Tuple[float, float]]):
+        xy_tensor = torch.as_tensor(xy, dtype=torch.float32)
+        if xy_tensor.numel() == 0:
+            raise ValueError("Point tensor is empty.")
+        if xy_tensor.dim() == 1:
+            if xy_tensor.numel() != 2:
+                raise ValueError(f"Expected a 2D point, got shape {tuple(xy_tensor.shape)}")
+            xy_tensor = xy_tensor.unsqueeze(0)
+            squeeze = True
+        elif xy_tensor.dim() == 2 and xy_tensor.size(-1) == 2:
+            squeeze = False
+        else:
+            raise ValueError(f"Expected shape (2,) or (N, 2); received {tuple(xy_tensor.shape)}")
+        if xy_tensor.device != self.scale.device:
+            xy_tensor = xy_tensor.to(self.scale.device)
+        return xy_tensor, squeeze
+
+    def _ensure_index_tensor(self, indices: Union[int, np.ndarray, torch.Tensor]):
+        idx_tensor = torch.as_tensor(indices, dtype=torch.long)
+        if idx_tensor.numel() == 0:
+            raise ValueError("Index tensor is empty.")
+        if idx_tensor.dim() == 0:
+            idx_tensor = idx_tensor.unsqueeze(0)
+            squeeze = True
+        elif idx_tensor.dim() == 1:
+            squeeze = False
+        else:
+            raise ValueError(f"Expected scalar or 1D indices; received {tuple(idx_tensor.shape)}")
+        if idx_tensor.device != self.centers.device:
+            idx_tensor = idx_tensor.to(self.centers.device)
+        return idx_tensor, squeeze
+
+    def _normalize_tensor(self, xy):
+        xy_tensor, squeeze = self._ensure_point_tensor(xy)
+        normalized = (xy_tensor + self.translate) * self.scale
+        return normalized, squeeze
+
+    def _denormalize_tensor(self, xy):
+        xy_tensor, squeeze = self._ensure_point_tensor(xy)
+        denormalized = xy_tensor / self.scale - self.translate
+        return denormalized, squeeze
+
+    def normalize_points(self, xy):
+        normalized, squeeze = self._normalize_tensor(xy)
+        return normalized.squeeze(0) if squeeze else normalized
+
+    def denormalize_points(self, xy):
+        denormalized, squeeze = self._denormalize_tensor(xy)
+        return denormalized.squeeze(0) if squeeze else denormalized
+
+    def points_to_embeddings(self, xy, K: int = 1):
+        xy_norm, squeeze = self._normalize_tensor(xy)
+        embeddings = self.embedding(xy_norm, K=K)
+        return embeddings.squeeze(0) if squeeze else embeddings
+
+    def points_to_indices(self, xy) -> torch.Tensor:
+        xy_norm, squeeze = self._normalize_tensor(xy)
+        indices = self.embedding.nearest_indices(xy_norm)
+        return indices.squeeze(0) if squeeze else indices
+
+    def encode_points(self, xy, K: int = 1):
+        """
+        Convenience wrapper that returns both embeddings and discrete token indices.
+        """
+        xy_norm, squeeze = self._normalize_tensor(xy)
+        embeddings, indices = self.embedding(xy_norm, K=K, return_indices=True)
+        if squeeze:
+            embeddings = embeddings.squeeze(0)
+            indices = indices.squeeze(0)
+        return embeddings, indices
+
+    def indices_to_points(self, indices):
+        idx_tensor, squeeze = self._ensure_index_tensor(indices)
+        centers = self.centers[idx_tensor]
+        points = self.denormalize_points(centers)
+        return points.squeeze(0) if squeeze else points
+
+    def indices_to_embeddings(self, indices):
+        idx_tensor, squeeze = self._ensure_index_tensor(indices)
+        embeddings = self.embedding.E[idx_tensor]
+        return embeddings.squeeze(0) if squeeze else embeddings
+
+    def decode_embeddings(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """
+        Wrapper around the decoder that accepts either a single embedding or a batch.
+        """
+        embeddings_tensor = torch.as_tensor(embeddings, dtype=torch.float32, device=self.centers.device)
+        squeeze = False
+        if embeddings_tensor.dim() == 1:
+            embeddings_tensor = embeddings_tensor.unsqueeze(0)
+            squeeze = True
+        elif embeddings_tensor.dim() != 2:
+            raise ValueError(f"Expected embedding tensor with shape (D,) or (N, D); got {tuple(embeddings_tensor.shape)}")
+        decoded = self.decoder(embeddings_tensor)
+        return decoded.squeeze(0) if squeeze else decoded
 
 @torch.no_grad()
 def geometry_loss(embeddings: torch.Tensor, points: torch.Tensor,
@@ -231,14 +391,19 @@ def supervised_contrastive_loss(z, labels, temperature=0.07, eps=1e-12):
     mean_log_prob_pos = (positive_mask * log_prob).sum(dim=1) / pos_counts.clamp_min(1)
     return -(mean_log_prob_pos[valid]).mean()
     
-def train_loop(points, kmeans, num_epochs=100, batch_size=512, lr=1e-3, device='cuda'):
+def train_loop(points, kmeans, transform=None, num_epochs=100, batch_size=512, lr=1e-3, device='cuda'):
     dataset = torch.utils.data.TensorDataset(torch.from_numpy(points).float())
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
-    model = nn.Module()
     embedding_dimension = 4096
-    model.embedding = PointEmbedding(kmeans, D=embedding_dimension).to(device)
-    model.decoder = EmbeddingDecoder(kmeans, D=embedding_dimension).to(device)
+    model = PointTokenizer(
+        kmeans_or_centers=kmeans,
+        D=embedding_dimension,
+        dropout=0.0,
+        hidden_dim=256,
+        transform=transform,
+    ).to(device)
+    model.train()
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -324,6 +489,6 @@ if __name__ == "__main__":
 
     # train
     wandb.init(project="vladiffusion", name="tokenizer_training_3s")
-    model = train_loop(points_normalized, kmeans, num_epochs=100, batch_size=4096, lr=1.5e-4, device='cuda')
+    model = train_loop(points_normalized, kmeans, transform=transform, num_epochs=100, batch_size=4096, lr=1.5e-4, device='cuda')
     torch.save(model.state_dict(), "tokenizer_model.pth")
     wandb.finish()
