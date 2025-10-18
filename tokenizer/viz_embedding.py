@@ -12,7 +12,7 @@ def embed_points_in_batches(pts_xy, model, device='cuda', batch=16384):
     out = []
     T = torch.from_numpy(pts_xy).float().to(device)
     for i in range(0, T.shape[0], batch):
-        out.append(model.embedding(T[i:i+batch]).cpu())
+        out.append(model.embedding(T[i:i+batch], K=1).cpu())
     return torch.cat(out, dim=0).numpy()
 
 def visualize_embedding_field(model, transform, grid_res=300, device='cuda',
@@ -114,4 +114,4 @@ if __name__ == "__main__":
     model.load_state_dict(sd)
     model.eval()
 
-    L = visualize_embedding_field(model, transform, grid_res=320, device=device, pca_fit_on='centers')
+    L = visualize_embedding_field(model, transform, grid_res=480, device=device, pca_fit_on='centers')

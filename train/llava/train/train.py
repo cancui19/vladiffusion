@@ -60,6 +60,20 @@ IS_TOKENIZER_GREATER_THAN_0_14 = version.parse(tokenizers.__version__) >= versio
 
 import warnings
 warnings.filterwarnings("ignore")
+
+
+import ast
+from tokenizer.example_usage import load_point_tokenizer
+weights_file = "tokenizer/tokenizer_model.pth"
+point_tokenizer = load_point_tokenizer(weights_file)
+
+ids_to_replace = np.load("apps/unused_token_ids.npy")
+sd = torch.load("tokenizer/tokenizer_model.pth", map_location='cpu')
+point_embeddings = sd['embedding.E'] # should be (2048, 4096), current is (2048, 128)
+if isinstance(ids_to_replace, np.ndarray):
+    model_action_token_ids = ids_to_replace.tolist()
+else:
+    model_action_token_ids = list(ids_to_replace)       # point_embeddings = torch.randn(2048, 4096, device=model.device, dtype=model.dtype) # so use random embeddings for now
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
@@ -793,6 +807,23 @@ def preprocess_llada(
 
             role =  roles.get(role, role)
             
+            
+            if role == 'assistant':
+                new_content = ''
+                points = ast.literal_eval(f"{content}")
+                for point in points:
+                    embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
+                    # embed, local_point_id = convert_points_to_embeds(point[0], point[1])
+                    point_id = ids_to_replace[local_point_id]
+                    token = tokenizer.convert_ids_to_tokens([point_id])[0]
+                    # token = point_tokenizer.indices_to_points(point_id)
+                    new_content += token
+                    # print(new_content)
+                content = new_content
+            old = "Generate the predicted future waypoints in the format [x_1, y_1], [x_2, y_2], ..., [x_10, y_10]. Write the raw text, not markdown or LaTeX. Future waypoints:"
+            new = "Generate the predicted ten future waypoints in the action token format:"
+            content = content.replace(old, new)
+            # print(content)
             conv = [{"role" : role, "content" : content}]
             # First is bos token we don't need here
             encode_id = tokenizer.apply_chat_template(conv)[1:]
@@ -1807,6 +1838,19 @@ def train(attn_implementation=None):
 
     model = get_model(model_args, training_args, bnb_model_from_pretrained_args)
     model.config.use_cache = False
+    vla = True
+    if vla:
+        # model.model.embed_tokens.weight # (126349, 4096)
+        with torch.no_grad():
+            point_embeddings_type = point_embeddings.type(model.dtype)
+            model.model.embed_tokens.weight[ids_to_replace] = point_embeddings_type
+            # embed_device = model.model.embed_tokens.weight.device
+            # point_embeddings_device = point_embeddings.to(embed_device, dtype=model.model.embed_tokens.weight.dtype)
+            # model.model.embed_tokens.weight[ids_to_replace] = point_embeddings_device
+            if hasattr(model, "lm_head") and model.lm_head.weight.size(0) >= len(model_action_token_ids):
+                model.lm_head.weight[ids_to_replace] = point_embeddings_type
+            model.config.action_token_ids = model_action_token_ids
+
     if model_args.rope_scaling_factor is not None and model_args.rope_scaling_type is not None:
         model.config.rope_scaling = {
             "factor": model_args.rope_scaling_factor,

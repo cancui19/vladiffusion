@@ -1830,10 +1830,26 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
         logits = logits.float()
 
         loss = None
+        point_loss = None
+        # print(1111111111111111111)
         if labels is not None:
+            action_token_ids = getattr(self.config, "action_token_ids", None)
+            if action_token_ids is not None:
+                action_token_ids_tensor = torch.as_tensor(action_token_ids, device=logits.device, dtype=torch.long)
+                action_positions = torch.isin(labels, action_token_ids_tensor)
+                if action_positions.any():
+                    vocab_mask = torch.zeros(logits.size(-1), device=logits.device, dtype=torch.bool)
+                    vocab_mask[action_token_ids_tensor] = True
+                    flat_logits = logits.view(-1, logits.size(-1))
+                    flat_mask = action_positions.view(-1)
+                    if flat_mask.any():
+                        selected = flat_logits[flat_mask].clone()
+                        selected[:, ~vocab_mask] = torch.finfo(selected.dtype).min
+                        flat_logits[flat_mask] = selected
+                        logits = flat_logits.view_as(logits)
             # Change for MDM
-            self.config.shortcut_loss_prob = 0
-            if self.config.shortcut_loss_prob < random.random():
+            # self.config.shortcut_loss_prob = 0
+            if True:
                 # original loss
                 token_loss = F.cross_entropy(logits[masked_indices], labels[masked_indices], ignore_index=-100,
                                          reduction='none') / p_mask[masked_indices]
@@ -1887,6 +1903,15 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                     shortcut_loss = torch.sum(shortcut_token_loss / noisy_data_length[remask_indices]) / labels.shape[0]
 
                     loss = shortcut_loss
+
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(
+                logits.view(-1, logits.size(-1)),
+                labels.view(-1)
+            )
+            if hasattr(self.config, "point_loss_weight") and self.config.point_loss_weight > 0 and point_labels is not None:
+                point_loss = F.mse_loss(point_outputs, point_labels)
+                loss = loss + self.config.point_loss_weight * point_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]

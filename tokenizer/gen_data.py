@@ -19,8 +19,8 @@ DATAROOT = os.getenv("NUSCENES_ROOT")
 PROMPT_TYPE = ["long", "short"][0]
 OUTPUT_TEXT = True
 if OUTPUT_TEXT:
-    OUTPUT_JSON_TRAIN = f"{DATAROOT}nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_train.json"
-    OUTPUT_JSON_VAL   = f"{DATAROOT}nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_val.json"
+    OUTPUT_JSON_TRAIN = f"/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_train.json"
+    OUTPUT_JSON_VAL   = f"/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_val.json"
 else:
     OUTPUT_JSON_TRAIN = f"/{DATAROOT}/nuscenes_waypoint_{PROMPT_TYPE}_prompt_train.json"
     OUTPUT_JSON_VAL   = f"/{DATAROOT}/nuscenes_waypoint_{PROMPT_TYPE}_prompt_val.json"
