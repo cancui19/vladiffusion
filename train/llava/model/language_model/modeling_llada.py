@@ -1904,14 +1904,6 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
                     loss = shortcut_loss
 
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(
-                logits.view(-1, logits.size(-1)),
-                labels.view(-1)
-            )
-            if hasattr(self.config, "point_loss_weight") and self.config.point_loss_weight > 0 and point_labels is not None:
-                point_loss = F.mse_loss(point_outputs, point_labels)
-                loss = loss + self.config.point_loss_weight * point_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]
