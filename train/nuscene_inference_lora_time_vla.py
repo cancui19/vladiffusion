@@ -26,15 +26,16 @@ use_cache = True  # In this demo, we consider using dLLM-Cache(https://github.co
 print('start')
 
 warnings.filterwarnings("ignore")
-# pretrained = "GSAI-ML/LLaDA-V"
-pretrained = "/scratch/gilbreth/cancui/models/LLaDA-V"
+pretrained = "GSAI-ML/LLaDA-V"
+# pretrained = "/scratch/gilbreth/cancui/models/LLaDA-V"
 # save_dir = "/scratch/gilbreth/cancui/models/LLaDA-V"
 
 model_name = "llava_llada"
 device = "cuda:0"
 device_map = "cuda:0"
 tokenizer, model, image_processor, max_length = load_pretrained_model(pretrained, None, model_name, attn_implementation="sdpa", device_map=device_map)  # Add any other thing you want to pass in llava_model_args
-lora_path = '/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train'
+# lora_path = '/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train'
+lora_path = "/home/mgagvani/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train"
 
 model = PeftModel.from_pretrained(model, lora_path, adapter_name="default")
 model = model.merge_and_unload()
@@ -44,7 +45,8 @@ model.eval()
 # image = Image.open("/scratch/gilbreth/cancui/data/nuscenes/full/samples/CAM_FRONT/n008-2018-05-21-11-06-59-0400__CAM_FRONT__1526915243012465.jpg")
 import json
 # with open('../LLaDA-AV/data/nuscenes_drive_data_single_image_val_v2.json', 'r') as f:
-with open('data/nuscenes_waypoint_short_prompt_val.json', 'r') as f:
+with open('/scratch/gautschi/mgagvani/nuscenes/nuscenes_waypoint_long_prompt_train.json', 'r') as f:
+# with open('data/nuscenes_waypoint_short_prompt_val.json', 'r') as f:
     data_val = json.load(f)
 
 total_time = 0
@@ -111,13 +113,13 @@ for i, data_sample in enumerate(data_val):
     inference_results.append([text_outputs, data_sample['conversations'][1]['value']])
 
     # with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{job_name}.json', 'w') as f:
-    with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}.json', 'w') as f:
+    with open(f'/scratch/gilbreth/mgagvani/nuscenes/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}.json', 'w') as f:
         json.dump(inference_results, f)
     print(f"Saved inference results for {i}th data sample")
 
 print(f"Total time: {total_time:.4f} seconds")
 print(f"Average time: {total_time/len(inference_results):.4f} seconds")
-with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
+with open(f'/scratch/gilbreth/mgagvani/nuscenes/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
     f.write(f"Total Steps: {128}\n")
     f.write(f"Total time: {total_time:.4f} seconds\n")
     f.write(f"Average time: {total_time/len(inference_results):.4f} seconds")

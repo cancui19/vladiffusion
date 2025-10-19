@@ -7,7 +7,28 @@ export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
 
 export CUDA_VISIBLE_DEVICES=0
-export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:$PYTHONPATH
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
+
+DEFAULT_NUSCENES_ROOT="/scratch/gilbreth/cancui/data/nuscenes"
+export VLADIFFUSION_NUSCENES_ROOT="${VLADIFFUSION_NUSCENES_ROOT:-${DEFAULT_NUSCENES_ROOT}}"
+export HF_HOME=$(findscratch)/hfcache
+
+DEFAULT_DATA_JSON="${REPO_ROOT}/data/nuscenes_waypoint_text_long_prompt_train.json"
+if [ -n "${VLADIFFUSION_NUSCENES_ROOT}" ]; then
+    CANDIDATE_DATA_JSON="${VLADIFFUSION_NUSCENES_ROOT}/nuscenes_waypoint_long_prompt_train.json"
+    if [ -f "${CANDIDATE_DATA_JSON}" ]; then
+        DEFAULT_DATA_JSON="${CANDIDATE_DATA_JSON}"
+    fi
+fi
+DATA_JSON="${NUSCENES_DATA_JSON:-${DEFAULT_DATA_JSON}}"
+
+# Print out path of data json being used
+echo "Using data json file at: ${DATA_JSON}"
+
+# Only proceed after getting enter key pressed
+read -p "Press [Enter] key to continue..."
 
 num_node=$1
 gpu_num=$2
@@ -31,8 +52,8 @@ echo "node_rank ${RANK}"
 echo "gpu_num ${gpu_num}"
 echo "num_node ${num_node}"
 
-# LLM_VERSION="GSAI-ML/LLaDA-V"
-LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
+LLM_VERSION="GSAI-ML/LLaDA-V"
+# LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
 LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
@@ -49,7 +70,7 @@ python \
     train/llava/train/train_mem.py \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
-    --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train.json" \
+    --data_path "${DATA_JSON}" \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
@@ -85,7 +106,7 @@ python \
     --tf32 False \
     --model_max_length 8192 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 0 \
+    --dataloader_num_workers 32 \
     --lazy_preprocess True \
     --report_to tensorboard \
     --torch_compile False \
