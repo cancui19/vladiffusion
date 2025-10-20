@@ -89,7 +89,6 @@ python \
     --lazy_preprocess True \
     --report_to tensorboard \
     --torch_compile False \
-    --torch_compile_backend "inductor" \
     --dataloader_drop_last True \
     --attn_implementation sdpa \
     --use_conversation_mask False

@@ -105,8 +105,21 @@ for i, data_sample in enumerate(data_val):
     total_time += generation_time
 
     # print(cont)
+    from pathlib import Path
+    from tokenizer.example_usage import load_point_tokenizer
+    import numpy as np
+    weights_file = Path("/depot/ziran/apps/jiaru/projects/vladiffusion/tokenizer/tokenizer_model.pth")
+    if not weights_file.exists():
+        raise FileNotFoundError()
+
+    point_tokenizer = load_point_tokenizer(weights_file)
+    ids_tensor = torch.from_numpy(np.load("apps/unused_token_ids.npy")).to(device)
+    pos_in_sorted = torch.searchsorted(-ids_tensor, -cont.flatten())      
+    recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)
+    
     text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=False)
     print(text_outputs)
+    print(recovered_point)
     exit()
     inference_results.append([text_outputs, data_sample['conversations'][1]['value']])
 
