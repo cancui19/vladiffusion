@@ -67,7 +67,7 @@ from tokenizer.example_usage import load_point_tokenizer
 weights_file = "tokenizer/tokenizer_model.pth"
 point_tokenizer = load_point_tokenizer(weights_file)
 
-ids_to_replace = np.load("apps/unused_token_ids.npy")
+ids_to_replace = np.load("tokenizer/unused_token_ids.npy")
 sd = torch.load("tokenizer/tokenizer_model.pth", map_location='cpu')
 point_embeddings = sd['embedding.E'] # should be (2048, 4096), current is (2048, 128)
 if isinstance(ids_to_replace, np.ndarray):
@@ -1344,6 +1344,66 @@ class LazySupervisedDataset(Dataset):
                 length_list.append(-cur_len)
         return length_list
 
+    def _maybe_override_multimodal_path(self, value):
+        override_root = (
+            os.environ.get("VLADIFFUSION_NUSCENES_ROOT")
+            or os.environ.get("NUSCENES_ROOT")
+        )
+        if not override_root:
+            return value
+
+        def _rewrite(path: str) -> str:
+            if not isinstance(path, str):
+                return path
+            if os.path.exists(path):
+                return path
+            marker = "nuscenes"
+            if marker not in path:
+                return path
+            suffix = path.split(marker, 1)[1].lstrip("/\\")
+            if not suffix:
+                return path
+            rel_path = pathlib.Path(suffix)
+            relative_candidates = []
+            rel_parts = rel_path.parts
+
+            strip_prefixes = [
+                ("full",),
+                ("data",),
+                ("data", "full"),
+            ]
+            for prefix in strip_prefixes:
+                if rel_parts[: len(prefix)] == prefix and len(rel_parts) > len(prefix):
+                    relative_candidates.append(pathlib.Path(*rel_parts[len(prefix) :]))
+
+            markers = (
+                "samples",
+                "sweeps",
+                "maps",
+                "can_bus",
+                "nuscenes_waypoint_text_long_prompt_train.json",
+                "nuscenes_waypoint_text_long_prompt_val.json",
+            )
+            for marker in markers:
+                if marker in rel_parts:
+                    idx = rel_parts.index(marker)
+                    if idx < len(rel_parts):
+                        relative_candidates.append(pathlib.Path(*rel_parts[idx:]))
+
+            relative_candidates.append(rel_path)
+
+            for rel in relative_candidates:
+                candidate = pathlib.Path(override_root) / rel
+                if candidate.exists():
+                    return str(candidate)
+
+            # Fall back to first relative candidate even if it does not exist yet.
+            return str(pathlib.Path(override_root) / relative_candidates[0])
+
+        if isinstance(value, list):
+            return [_rewrite(p) for p in value]
+        return _rewrite(value)
+
     def process_image(self, image_file, overwrite_image_aspect_ratio=None):
         image_folder = self.data_args.image_folder
         image_folder_2 = getattr(self.data_args, 'image_folder_2', None)
@@ -1443,6 +1503,7 @@ class LazySupervisedDataset(Dataset):
 
         if "image" in sources[0]:
             image_file = self.list_data_dict[i]["image"]
+            image_file = self._maybe_override_multimodal_path(image_file)
             # image_file = image_file[0:2] ##TBD: modify later
             if type(image_file) is list:
                 image = [self.process_image(f) for f in image_file]
