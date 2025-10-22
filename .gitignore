@@ -5,3 +5,4 @@ wandb/
 .specstory
 apps/
 exp/
+results/
