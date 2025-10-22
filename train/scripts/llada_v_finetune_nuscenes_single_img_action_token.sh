@@ -7,7 +7,8 @@ export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
 
 export CUDA_VISIBLE_DEVICES=0
-export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:$PYTHONPATH
+# export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:$PYTHONPATH
+export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:/depot/ziran/apps/jiaru/projects/vladiffusion/train:$PYTHONPATH
 
 num_node=$1
 gpu_num=$2
@@ -42,7 +43,7 @@ VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 
 PROMPT_VERSION="llava_llada"
 
-BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train"
+BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_0.75fix_random_embeddings"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 python \

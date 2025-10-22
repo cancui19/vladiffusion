@@ -69,7 +69,14 @@ point_tokenizer = load_point_tokenizer(weights_file)
 
 ids_to_replace = np.load("apps/unused_token_ids.npy")
 sd = torch.load("tokenizer/tokenizer_model.pth", map_location='cpu')
-point_embeddings = sd['embedding.E'] # should be (2048, 4096), current is (2048, 128)
+point_embeddings = sd['embedding.E'] # should be (2048, 4096)
+
+import numpy as np
+rng = np.random.default_rng(seed=42)  
+fix_random_embeddings = torch.from_numpy(rng.standard_normal(size=(1, 4096))).to(point_embeddings.device)
+fix_random_embeddings *= point_embeddings[0].norm() / fix_random_embeddings.norm()
+point_embeddings = 1.0 * point_embeddings + 0.0 * fix_random_embeddings
+
 if isinstance(ids_to_replace, np.ndarray):
     model_action_token_ids = ids_to_replace.tolist()
 else:

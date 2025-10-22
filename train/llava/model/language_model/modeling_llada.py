@@ -52,7 +52,7 @@ from transformers.utils import (
 )
 from .configuration_llada import LLaDAConfig
 from llava.cache import dLLMCache, dLLMCacheConfig
-from train.llava.train.train import model_action_token_ids
+
 
 if is_flash_attn_2_available():
     from flash_attn import flash_attn_func, flash_attn_varlen_func
@@ -1434,7 +1434,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                         # logits_time = logits_time_end - logits_time_start
                         # print(f"Logits time: {logits_time:.4f} seconds")
                     # del outputs
-                    
+                    from train.llava.train.train import model_action_token_ids
                     blocked = torch.ones(logits.size(-1), dtype=torch.bool, device=logits.device)
                     blocked[model_action_token_ids] = False  
                     very_neg = torch.finfo(logits.dtype).min

@@ -1,55 +1,49 @@
-from transformers.generation import stopping_criteria
-from llava.model.builder import load_pretrained_model
-from llava.mm_utils import get_model_name_from_path, process_images, tokenizer_image_token
-from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
-from llava.conversation import conv_templates, SeparatorStyle
-
-from llava.cache import dLLMCache, dLLMCacheConfig
-from llava.hooks import register_cache_LLaDA_V
 from dataclasses import asdict
+import copy
+import json
+import time
+import warnings
 
 from PIL import Image
-import requests
-import copy
+import numpy as np
 import torch
-import time
-
-import sys
-import warnings
 from peft import PeftModel
 
-job_name = 'single_image_train_lora_time_step_128'
-prompt_interval_steps = 25
-gen_interval_steps = 7
-transfer_ratio = 0.25
-use_cache = True  # In this demo, we consider using dLLM-Cache(https://github.com/maomaocun/dLLM-cache) to speed up generation. Set to True to enable caching or False to test without it.
-print('start')
+from llava.cache import dLLMCache, dLLMCacheConfig
+from llava.conversation import conv_templates
+from llava.hooks import register_cache_LLaDA_V
+from llava.mm_utils import process_images, tokenizer_image_token
+from llava.model.builder import load_pretrained_model
+from llava.constants import IMAGE_TOKEN_INDEX
+
+from train.config.nuscene_inference_vla import config
+
+
+print("start")
 
 warnings.filterwarnings("ignore")
-# pretrained = "GSAI-ML/LLaDA-V"
-pretrained = "/scratch/gilbreth/cancui/models/LLaDA-V"
-# save_dir = "/scratch/gilbreth/cancui/models/LLaDA-V"
 
-model_name = "llava_llada"
-device = "cuda:0"
-device_map = "cuda:0"
-tokenizer, model, image_processor, max_length = load_pretrained_model(pretrained, None, model_name, attn_implementation="sdpa", device_map=device_map)  # Add any other thing you want to pass in llava_model_args
-lora_path = '/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train'
+tokenizer, model, image_processor, max_length = load_pretrained_model(
+    config.pretrained,
+    None,
+    config.model_name,
+    attn_implementation="sdpa",
+    device_map=config.device_map,
+)
 
-model = PeftModel.from_pretrained(model, lora_path, adapter_name="default")
+model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
 model = model.merge_and_unload()
 
 model.eval()
 # image = Image.open("test.jpg")
 # image = Image.open("/scratch/gilbreth/cancui/data/nuscenes/full/samples/CAM_FRONT/n008-2018-05-21-11-06-59-0400__CAM_FRONT__1526915243012465.jpg")
-import json
 # with open('../LLaDA-AV/data/nuscenes_drive_data_single_image_val_v2.json', 'r') as f:
-with open('data/nuscenes_waypoint_short_prompt_val.json', 'r') as f:
+with open(config.data_path, 'r') as f:
     data_val = json.load(f)
 
 total_time = 0
 
-conv_template = "llava_llada" 
+conv_template = config.conv_template 
 
 inference_results = []
 
@@ -61,9 +55,8 @@ for i, data_sample in enumerate(data_val):
     #     continue
     image = Image.open(data_sample['image'])
     image_tensor = process_images([image], image_processor, model.config)
-    image_tensor = [_image.to(dtype=torch.float16, device=device) for _image in image_tensor]
+    image_tensor = [_image.to(dtype=torch.float16, device=config.device) for _image in image_tensor]
     image_sizes = [image.size]
-    # question = DEFAULT_IMAGE_TOKEN + "\n" + data_sample['conversations'][0]['value']
     question = data_sample['conversations'][0]['value']
     print(question)
 
@@ -74,13 +67,13 @@ for i, data_sample in enumerate(data_val):
 
     model.eval()
 
-    if use_cache:
+    if config.use_cache:
         dLLMCache.new_instance(
             **asdict(
                 dLLMCacheConfig(
-                    prompt_interval_steps=prompt_interval_steps,
-                    gen_interval_steps=gen_interval_steps,
-                    transfer_ratio=transfer_ratio,
+                    prompt_interval_steps=config.prompt_interval_steps,
+                    gen_interval_steps=config.gen_interval_steps,
+                    transfer_ratio=config.transfer_ratio,
                 )
             )
         )
@@ -89,7 +82,7 @@ for i, data_sample in enumerate(data_val):
     else:
         print("Testing without cache")
 
-    input_ids = tokenizer_image_token(prompt_question, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(device)
+    input_ids = tokenizer_image_token(prompt_question, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(config.device)
     image_sizes = [image.size]
 
     start_time = time.time()
@@ -97,7 +90,11 @@ for i, data_sample in enumerate(data_val):
         input_ids,
         images=image_tensor,
         image_sizes=image_sizes,
-        steps=10, gen_length=10, block_length=10, tokenizer=tokenizer, stopping_criteria=['<|eot_id|>']
+        steps=config.generation_steps,
+        gen_length=config.generation_length,
+        block_length=config.generation_block_length,
+        tokenizer=tokenizer,
+        stopping_criteria=list(config.stopping_criteria),
     )
     end_time = time.time()
     generation_time = end_time - start_time
@@ -107,30 +104,29 @@ for i, data_sample in enumerate(data_val):
     # print(cont)
     from pathlib import Path
     from tokenizer.example_usage import load_point_tokenizer
-    import numpy as np
-    weights_file = Path("/depot/ziran/apps/jiaru/projects/vladiffusion/tokenizer/tokenizer_model.pth")
+    weights_file = Path(config.tokenizer_weights)
     if not weights_file.exists():
         raise FileNotFoundError()
 
     point_tokenizer = load_point_tokenizer(weights_file)
-    ids_tensor = torch.from_numpy(np.load("apps/unused_token_ids.npy")).to(device)
+    ids_tensor = torch.from_numpy(np.load(config.unused_token_ids_path)).to(config.device)
     pos_in_sorted = torch.searchsorted(-ids_tensor, -cont.flatten())      
     recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)
     
     text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=False)
     print(text_outputs)
     print(recovered_point)
-    exit()
-    inference_results.append([text_outputs, data_sample['conversations'][1]['value']])
 
-    # with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{job_name}.json', 'w') as f:
-    with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}.json', 'w') as f:
-        json.dump(inference_results, f)
-    print(f"Saved inference results for {i}th data sample")
+    inference_results.append([str(recovered_point.tolist())[1:-1], data_sample['conversations'][1]['value']])
+
+# with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
+with open(config.results_path, 'w') as f:
+    json.dump(inference_results, f)
+print(f"Saved inference results for {i}th data sample")
 
 print(f"Total time: {total_time:.4f} seconds")
 print(f"Average time: {total_time/len(inference_results):.4f} seconds")
-with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
-    f.write(f"Total Steps: {128}\n")
-    f.write(f"Total time: {total_time:.4f} seconds\n")
-    f.write(f"Average time: {total_time/len(inference_results):.4f} seconds")
+# with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
+#     f.write(f"Total Steps: {128}\n")
+#     f.write(f"Total time: {total_time:.4f} seconds\n")
+#     f.write(f"Average time: {total_time/len(inference_results):.4f} seconds")
