@@ -817,7 +817,14 @@ def preprocess_llada(
             
             if role == 'assistant':
                 new_content = ''
-                points = ast.literal_eval(f"{content}")
+                pos_eol = content.find('\n')
+                if pos_eol != -1:
+                    points_str = content[:pos_eol]
+                    explanation_str = content[pos_eol + 1:].replace('\n', '.')
+                else:
+                    points_str = content
+                    explanation_str = ''
+                points = ast.literal_eval(f"{points_str}")
                 for point in points:
                     embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
                     # embed, local_point_id = convert_points_to_embeds(point[0], point[1])
@@ -826,7 +833,7 @@ def preprocess_llada(
                     # token = point_tokenizer.indices_to_points(point_id)
                     new_content += token
                     # print(new_content)
-                content = new_content
+                content = new_content + explanation_str
             old = "Generate the predicted future waypoints in the format [x_1, y_1], [x_2, y_2], ..., [x_10, y_10]. Write the raw text, not markdown or LaTeX. Future waypoints:"
             new = "Generate the predicted ten future waypoints in the action token format:"
             content = content.replace(old, new)
