@@ -7,7 +7,14 @@ export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
 
 export CUDA_VISIBLE_DEVICES=0
-export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:$PYTHONPATH
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}" 
+
+export HF_HOME=$(findscratch)/hfcache
+
+# wait for user (get to press enter)
+read -p "Press Enter to continue..."
 
 num_node=$1
 gpu_num=$2
@@ -31,8 +38,8 @@ echo "node_rank ${RANK}"
 echo "gpu_num ${gpu_num}"
 echo "num_node ${num_node}"
 
-# LLM_VERSION="GSAI-ML/LLaDA-V"
-LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
+LLM_VERSION="GSAI-ML/LLaDA-V"
+# LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
 LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
@@ -45,11 +52,12 @@ PROMPT_VERSION="llava_llada"
 BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
-python \
-    train/llava/train/train_mem.py \
+# python \
+#    train/llava/train/train_mem.py \
+python -m llava.train.train_mem \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
-    --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train.json" \
+    --data_path "/scratch/gautschi/mgagvani/new_nuscenes/downloads/nuscenes_waypoint_long_prompt_train.json" \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
@@ -72,20 +80,20 @@ python \
     --num_train_epochs 1 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 4 \ 
     --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 5000 \
     --save_total_limit 1 \
-    --learning_rate 1e-5 \
-    --weight_decay 0. \
-    --warmup_ratio 0.03 \
+    --learning_rate 5e-6 \  
+    --weight_decay 0.01 \
+    --warmup_ratio 0.05 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 False \
     --model_max_length 8192 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 0 \
+    --dataloader_num_workers 16 \
     --lazy_preprocess True \
     --report_to tensorboard \
     --torch_compile False \

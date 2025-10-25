@@ -17,7 +17,7 @@ VERSION = 'v1.0-trainval'
 DATAROOT = os.getenv("NUSCENES_ROOT")
 # output dir（ train / val）
 PROMPT_TYPE = ["long", "short"][0]
-OUTPUT_TEXT = True
+OUTPUT_TEXT = False
 if OUTPUT_TEXT:
     OUTPUT_JSON_TRAIN = f"/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_train.json"
     OUTPUT_JSON_VAL   = f"/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_{PROMPT_TYPE}_prompt_val.json"
@@ -168,7 +168,7 @@ for scene in scenes:
                 },
                 {
                     "from": "gpt",
-                    "value": fut_waypoints_str if OUTPUT_TEXT else ""
+                    "value": fut_waypoints_str # if OUTPUT_TEXT else ""
                 }
             ]
         }

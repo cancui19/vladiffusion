@@ -67,7 +67,7 @@ from tokenizer.example_usage import load_point_tokenizer
 weights_file = "tokenizer/tokenizer_model.pth"
 point_tokenizer = load_point_tokenizer(weights_file)
 
-ids_to_replace = np.load("apps/unused_token_ids.npy")
+ids_to_replace = np.load("tokenizer/unused_token_ids.npy")
 sd = torch.load("tokenizer/tokenizer_model.pth", map_location='cpu')
 point_embeddings = sd['embedding.E'] # should be (2048, 4096), current is (2048, 128)
 if isinstance(ids_to_replace, np.ndarray):
