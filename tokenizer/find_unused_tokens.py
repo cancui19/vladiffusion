@@ -39,7 +39,7 @@ with open("../data/nuscenes_waypoint_short_prompt_train.json", "r") as f:
             update_counts(turn["value"])
 
 
-least_used = [tok_id for tok_id, _ in counter.most_common()[::-1][:2048]]
+least_used = [tok_id for tok_id, _ in counter.most_common()[::-1][:256]]
 assert max(least_used) <= 126080
 print("IDs:", least_used[:10], "…", len(least_used))
 
