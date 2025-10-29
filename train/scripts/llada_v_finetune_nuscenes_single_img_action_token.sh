@@ -6,9 +6,10 @@ export NCCL_SOCKET_IFNAME=ibp161s0
 export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
 
-export CUDA_VISIBLE_DEVICES=0
-# export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:$PYTHONPATH
-export PYTHONPATH=/depot/ziran/apps/jiaru/projects/vladiffusion:/depot/ziran/apps/jiaru/projects/vladiffusion/train:$PYTHONPATH
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/train:${PYTHONPATH}"
 
 num_node=$1
 gpu_num=$2
@@ -32,8 +33,8 @@ echo "node_rank ${RANK}"
 echo "gpu_num ${gpu_num}"
 echo "num_node ${num_node}"
 
-# LLM_VERSION="GSAI-ML/LLaDA-V"
 LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
+# LLM_VERSION="GSAI-ML/LLaDA-V"
 LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
@@ -46,10 +47,13 @@ PROMPT_VERSION="llava_llada"
 BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_0.75fix_random_embeddings"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
-python \
+# python -m llava.train.train_mem \
+
+torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER_ADDR} --master_port=${MASTER_PORT} --node_rank=${RANK} \
     train/llava/train/train_mem.py \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
+    --ddp_find_unused_parameters True \
     --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train.json" \
     --image_folder "/" \
     --video_folder "/" \
@@ -92,7 +96,8 @@ python \
     --torch_compile False \
     --dataloader_drop_last True \
     --attn_implementation sdpa \
-    --use_conversation_mask False
+    --use_conversation_mask False \
+    --deepspeed train/scripts/zero2.json
 
 # torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER_ADDR} --master_port ${MASTER_PORT} --node_rank=${RANK} \
 #     /home/cancui/Research/LLaDA-V/train/llava/train/train_mem.py \
