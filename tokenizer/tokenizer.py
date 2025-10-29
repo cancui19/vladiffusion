@@ -481,14 +481,14 @@ def train_loop(points, kmeans, transform=None, num_epochs=100, batch_size=512, l
 if __name__ == "__main__":
     # save_data() # Uncomment to re-save data from NuScenes
     points = np.load("points_xy.npy")
-    kmeans = get_clusters(points, num_clusters=2048)
+    kmeans = get_clusters(points, num_clusters=(nc:=256))
     # viz(kmeans, points)
 
     points_normalized, kmeans, transform = preprocess(points, kmeans)
     viz(kmeans, points_normalized)
 
     # train
-    wandb.init(project="vladiffusion", name="tokenizer_training_3s")
+    wandb.init(project="vladiffusion", name=f"tok_{nc}pts_3s")
     model = train_loop(points_normalized, kmeans, transform=transform, num_epochs=100, batch_size=4096, lr=1.5e-4, device='cuda')
     torch.save(model.state_dict(), "tokenizer_model.pth")
     wandb.finish()
