@@ -25,14 +25,14 @@ warnings.filterwarnings("ignore")
 
 tokenizer, model, image_processor, max_length = load_pretrained_model(
     config.pretrained,
-    None,
+    config.model_base,
     config.model_name,
     attn_implementation="sdpa",
     device_map=config.device_map,
 )
 
-model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
-model = model.merge_and_unload()
+# model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
+# model = model.merge_and_unload()
 
 model.eval()
 # image = Image.open("test.jpg")

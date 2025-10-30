@@ -44,7 +44,8 @@ VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 
 PROMPT_VERSION="llava_llada"
 
-BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_0.75fix_random_embeddings"
+DATE=$(date +%Y%m%d_%H%M)
+BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_${DATE}"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 # python -m llava.train.train_mem \
@@ -73,7 +74,7 @@ torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER
     --bits 16 \
     --bf16 True \
     --run_name $BASE_RUN_NAME \
-    --output_dir "exp/$BASE_RUN_NAME" \
+    --output_dir "/scratch/gautschi/mgagvani/vladiffusion_scratch/$BASE_RUN_NAME" \
     --num_train_epochs 1 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \

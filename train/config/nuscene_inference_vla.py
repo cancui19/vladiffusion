@@ -10,11 +10,12 @@ class NuScenesVLAInferenceConfig:
     gen_interval_steps: int = 7
     transfer_ratio: float = 0.25
     use_cache: bool = True
-    pretrained: str = "GSAI-ML/LLaDA-V"
-    model_name: str = "llava_llada"
+    pretrained: str = "/scratch/gautschi/mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251029_2026"
+    model_base: str = "GSAI-ML/LLaDA-V"
+    model_name: str = "llava_llada_lora"
     device: str = "cuda:0"
     device_map: str = "cuda:0"
-    lora_path: str = "/home/mgagvani/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train"
+    lora_path: str = "/scratch/gautschi/mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251029_2026"
     data_path: str = "/scratch/gautschi/mgagvani/new_nuscenes/downloads/nuscenes_waypoint_long_prompt_train.json"
     results_path: str = "/home/mgagvani/vladiffusion/results/vla_init.json"
     tokenizer_weights: str = "/home/mgagvani/vladiffusion/tokenizer/tokenizer_model.pth"
