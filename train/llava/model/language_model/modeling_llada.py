@@ -63,6 +63,8 @@ logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LLaDAConfig"
 
+model_action_token_ids = None
+
 
 def _get_unpad_data(attention_mask):
     seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
@@ -1434,11 +1436,15 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                         # logits_time = logits_time_end - logits_time_start
                         # print(f"Logits time: {logits_time:.4f} seconds")
                     # del outputs
-                    from train.llava.train.train import model_action_token_ids
+                    global model_action_token_ids
+                    if model_action_token_ids is None:
+                        from train.llava.train.train import model_action_token_ids
                     blocked = torch.ones(logits.size(-1), dtype=torch.bool, device=logits.device)
                     blocked[model_action_token_ids] = False  
                     very_neg = torch.finfo(logits.dtype).min
-                    logits.masked_fill_(mask_index.unsqueeze(-1) & blocked, very_neg)
+                    action_index = mask_index.clone()
+                    action_index[:, inputs_embeds.shape[1] + 10:] = False
+                    logits.masked_fill_(action_index.unsqueeze(-1) & blocked, very_neg)
 
                     # logits[:, torch.where(mask_index)[1], ~model_action_token_ids] =  -float('inf')
                     for token_id in [126081, 126080, 126346, 126347]:

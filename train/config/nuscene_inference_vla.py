@@ -29,4 +29,14 @@ class NuScenesVLAInferenceConfig:
 
 config = NuScenesVLAInferenceConfig()
 
-
+config_explanation = NuScenesVLAInferenceConfig(
+    job_name="nuscenes_lora_vla_explanation",
+    pretrained="/scratch/gilbreth/cancui/models/LLaDA-V",
+    model_name="llava_llada",
+    lora_path="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train_explanation",
+    data_path="data/nuscenes_waypoint_text_long_prompt_val_Nu_X.json",
+    results_path="/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_init.json",
+    generation_steps=128,
+    generation_length=128,
+    generation_block_length=128
+)
