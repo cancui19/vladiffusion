@@ -830,7 +830,8 @@ def preprocess_llada(
                     embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
                     # embed, local_point_id = convert_points_to_embeds(point[0], point[1])
                     point_id = ids_to_replace[local_point_id]
-                    token = tokenizer.convert_ids_to_tokens([point_id])[0]
+                    # token = tokenizer.convert_ids_to_tokens([point_id])[0]
+                    token = tokenizer.decode([point_id], skip_special_tokens=False, clean_up_tokenization_spaces=False)
                     # token = point_tokenizer.indices_to_points(point_id)
                     new_content += token
                     # print(new_content)
