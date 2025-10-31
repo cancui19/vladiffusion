@@ -43,7 +43,7 @@ VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 
 PROMPT_VERSION="llava_llada"
 
-BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_explanation"
+BASE_RUN_NAME="VLA_finetune_train_curr"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 python \
@@ -55,7 +55,7 @@ python \
     --video_folder "/" \
     --lora_enable True \
     --lora_r 64 \
-    --mm_tunable_parts="mm_vision_tower,mm_mlp_adapter,mm_language_model" \
+    --mm_tunable_parts="mm_mlp_adapter,mm_language_model" \
     --mm_vision_tower_lr=2e-6 \
     --vision_tower ${VISION_MODEL_VERSION} \
     --mm_projector_type mlp2x_gelu \
@@ -84,7 +84,7 @@ python \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 False \
-    --model_max_length 8192 \
+    --model_max_length 4096 \
     --gradient_checkpointing True \
     --dataloader_num_workers 0 \
     --lazy_preprocess True \

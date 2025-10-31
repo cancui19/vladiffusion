@@ -705,6 +705,8 @@ def preprocess_llama3(
         return input_ids
 
     nl_tokens = tokenizer.convert_tokens_to_ids("\n\n")
+    assistant_prefix_tokens = None
+    assistant_eot_token = tokenizer.convert_tokens_to_ids("<|eot_id|>")
     # Apply prompt templates
     input_ids, targets = [], []
     for i, source in enumerate(sources):
@@ -793,6 +795,8 @@ def preprocess_llada(
         return input_ids
 
     nl_tokens = tokenizer.convert_tokens_to_ids("\n\n")
+    assistant_prefix_tokens = None
+    assistant_eot_token = tokenizer.convert_tokens_to_ids("<|eot_id|>")
     # Apply prompt templates
     input_ids, targets = [], []
     for i, source in enumerate(sources):
@@ -806,6 +810,23 @@ def preprocess_llada(
         input_id += tokenizer.apply_chat_template([{"role" : "system", "content" : system_message}])
         target += [IGNORE_INDEX] * len(input_id)
 
+        language_content = ''
+        action_content = ''
+        action_token_ids: List[int] = []
+        random_points = all_points[np.random.randint(0, len(all_points), 10)]
+        for point in random_points:
+            embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
+            point_id = ids_to_replace[local_point_id]
+            action_token_ids.append(point_id)
+            # token = tokenizer.convert_ids_to_tokens([point_id])[0]
+            # token = tokenizer.decode(
+            #     [point_id],
+            #     skip_special_tokens=False,
+            #     clean_up_tokenization_spaces=False,
+            # )
+            # action_content += token
+            language_content += f"[{point[0]:.2f}, {point[1]:.2f}], "
+                
         for conv in source:
             # Make sure llava data can load
             try:
@@ -817,26 +838,24 @@ def preprocess_llada(
 
             role =  roles.get(role, role)
             
-            language_content = ''
-            action_content = ''
-            random_points = all_points[np.random.randint(0, len(all_points), 10)]
-            for point in random_points:
-                embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
-                point_id = ids_to_replace[local_point_id]
-                # token = tokenizer.convert_ids_to_tokens([point_id])[0]
-                token = tokenizer.decode(
-                    [point_id],
-                    skip_special_tokens=False,
-                    clean_up_tokenization_spaces=False,
-                )
-                action_content += token
-                language_content += f"[{point[0]:.2f}, {point[1]:.2f}], "
-                    
-            if role == 'assistant':
+            if role == 'user':
                 content = "Generate these ten waypoints in the action token format:"
                 content = content + language_content
-            elif role == 'user':
-                content = action_content
+            elif role == 'assistant':
+                if assistant_prefix_tokens is None:
+                    template_tokens = tokenizer.apply_chat_template(
+                        [{"role": "assistant", "content": ""}],
+                        tokenize=True,
+                        add_generation_prompt=False,
+                    )[1:]
+                    if not template_tokens or template_tokens[-1] != assistant_eot_token:
+                        raise RuntimeError("Unexpected assistant template format when constructing action tokens.")
+                    assistant_prefix_tokens = template_tokens[:-1]
+                encode_id = assistant_prefix_tokens + action_token_ids + [assistant_eot_token]
+                input_id += encode_id
+                target += encode_id
+                assert len(encode_id) == 17
+                continue
 
             # print(content)
             conv = [{"role" : role, "content" : content}]
@@ -846,7 +865,13 @@ def preprocess_llada(
             if role in ["user", "system"]:
                 target += [IGNORE_INDEX] * len(encode_id)
             else:
+                raise ValueError(f"Unexpected running")
                 target += encode_id
+                # print(len(encode_id))
+                if len(encode_id) != 17:
+                    print(len(encode_id))
+                    print(encode_id)
+                    print(tokenizer.decode(encode_id))
                     
         assert len(input_id) == len(target), f"{len(input_id)} != {len(target)}"
         for idx, encode_id in enumerate(input_id):
@@ -1429,7 +1454,7 @@ class LazySupervisedDataset(Dataset):
                 return sample
             except Exception as e:
                 # sleep 1s in case it is a cloud disk issue
-                print(f"[Try #{attempt_idx}] Failed to fetch sample {i}. Exception:", e)
+                print(f"[Try #{attempt_idx}] Failed to fetch sample {i}. Exception:", e, repr(e))
                 time.sleep(1)
 
         # try other samples, in case it is file corruption issue
