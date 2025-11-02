@@ -1,12 +1,12 @@
 set -x
-export OMP_NUM_THREADS=14
+export OMP_NUM_THREADS=112
 # export NCCL_IB_DISABLE=0
 # export NCCL_IB_GID_INDEX=3
 # export NCCL_SOCKET_IFNAME=ibp161s0
 export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
 
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}" 
@@ -64,7 +64,7 @@ torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
-    --lora_r 64 \
+    --lora_r 256 \
     --mm_tunable_parts="mm_vision_tower,mm_mlp_adapter,mm_language_model" \
     --mm_vision_tower_lr=2e-6 \
     --vision_tower ${VISION_MODEL_VERSION} \
@@ -80,7 +80,7 @@ torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER
     --bf16 True \
     --run_name $BASE_RUN_NAME \
     --output_dir "/scratch/gautschi/mgagvani/vladiffusion_scratch/$BASE_RUN_NAME" \
-    --num_train_epochs 1 \
+    --num_train_epochs 8 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
     --gradient_accumulation_steps 4 \
@@ -88,15 +88,15 @@ torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER
     --save_strategy "steps" \
     --save_steps 5000 \
     --save_total_limit 1 \
-    --learning_rate 5e-6 \
-    --weight_decay 0.01 \
+    --learning_rate 1e-4 \
+    --weight_decay 0.00 \
     --warmup_ratio 0.05 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 False \
     --model_max_length 4096 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 2 \
+    --dataloader_num_workers 1 \
     --lazy_preprocess True \
     --report_to tensorboard \
     --torch_compile False \

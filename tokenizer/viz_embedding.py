@@ -2,16 +2,17 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
-from tokenizer import PointEmbedding, EmbeddingDecoder, preprocess, get_clusters, viz
+from tokenizer import PointEmbedding, EmbeddingDecoder, PointTokenizer  # import PointTokenizer
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 # --- helper: embed a big grid in chunks to avoid OOM ---
 @torch.no_grad()
-def embed_points_in_batches(pts_xy, model, device='cuda', batch=16384):
+def embed_points_in_batches(pts_xy, model, device='cuda', batch=16):
     out = []
     T = torch.from_numpy(pts_xy).float().to(device)
-    for i in range(0, T.shape[0], batch):
+    for i in tqdm(range(0, T.shape[0], batch)):
         out.append(model.embedding(T[i:i+batch], K=1).cpu())
     return torch.cat(out, dim=0).numpy()
 
@@ -98,20 +99,43 @@ def visualize_embedding_field(model, transform, grid_res=300, device='cuda',
     return L_est
 
 if __name__ == "__main__":
-    points = np.load("points_xy.npy")
-    kmeans = get_clusters(points, num_clusters=2048)
-    # viz(kmeans, points)
+    """"
+    Visualizer
+    Expects a checkpoint saved from `tokenizer.py` training
+    """
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    points_normalized, kmeans, transform = preprocess(points, kmeans)
-    viz(kmeans, points_normalized)
-
-    device = 'cuda'
-    # after training:
     sd = torch.load("tokenizer_model.pth", map_location=device)
-    model = nn.Module()
-    model.embedding = PointEmbedding(kmeans).to(device)
-    model.decoder   = EmbeddingDecoder(kmeans).to(device)
-    model.load_state_dict(sd)
-    model.eval()
 
-    L = visualize_embedding_field(model, transform, grid_res=480, device=device, pca_fit_on='centers')
+    # Infer number of centers & embedding dim from checkpoint tensors
+    num_centers = sd['embedding.C'].shape[0]
+    emb_dim = sd['embedding.E'].shape[1]
+
+    # Reconstruct centers tensor for initialization (will be overwritten)
+    centers = sd['embedding.C'].clone().cpu().numpy()
+
+    # Build tokenizer with dummy transform
+    tokenizer = PointTokenizer(
+        kmeans_or_centers=centers,
+        D=emb_dim,
+        dropout=0.0,
+        hidden_dim=256,
+        transform=(1.0, 0.0, 0.0),  # placeholder
+        tau=1.0,
+    ).to(device)
+
+    missing, unexpected = tokenizer.load_state_dict(sd, strict=False)
+    if missing:
+        print(f"Warning: missing keys when loading tokenizer: {missing}")
+    if unexpected:
+        print(f"Warning: unexpected keys when loading tokenizer: {unexpected}")
+
+    tokenizer.eval()
+
+    # Extract transform from loaded buffers for meter visualization
+    scale = float(tokenizer.scale.item())
+    tx, ty = tokenizer.translate.cpu().tolist()
+    transform = (scale, tx, ty)
+
+    L = visualize_embedding_field(tokenizer, transform, grid_res=480, device=device, pca_fit_on='centers')
+    print(f"Estimated Lipschitz constant L={L:.4f} for tokenizer with {num_centers} centers.")

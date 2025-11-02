@@ -2115,7 +2115,7 @@ def train(attn_implementation=None):
     setattr(training_args, "use_webdataset", getattr(data_args, "use_webdataset"))
     trainer = LLaVATrainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
 
-    assert training_args.torch_compile is False
+    # assert training_args.torch_compile is False
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         trainer.train(resume_from_checkpoint=True)
     else:

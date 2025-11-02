@@ -6,3 +6,5 @@ wandb/
 apps/
 exp/
 results/
+*.pickle
+*.pickle.lock
