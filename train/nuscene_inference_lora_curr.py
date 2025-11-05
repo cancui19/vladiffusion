@@ -1,0 +1,192 @@
+from dataclasses import asdict
+import copy
+import json
+import re
+import time
+import warnings
+
+from PIL import Image
+import numpy as np
+import torch
+from peft import PeftModel
+
+from llava.cache import dLLMCache, dLLMCacheConfig
+from llava.conversation import conv_templates
+from llava.hooks import register_cache_LLaDA_V
+from llava.mm_utils import process_images, tokenizer_image_token
+from llava.model.builder import load_pretrained_model
+from llava.constants import IMAGE_TOKEN_INDEX
+
+from train.config.nuscene_inference_vla import config_curr as config
+
+
+print("start")
+
+warnings.filterwarnings("ignore")
+
+tokenizer, model, image_processor, max_length = load_pretrained_model(
+    config.pretrained,
+    None,
+    config.model_name,
+    attn_implementation="sdpa",
+    device_map=config.device_map,
+)
+
+model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
+model = model.merge_and_unload()
+
+model.eval()
+# image = Image.open("test.jpg")
+# image = Image.open("/scratch/gilbreth/cancui/data/nuscenes/full/samples/CAM_FRONT/n008-2018-05-21-11-06-59-0400__CAM_FRONT__1526915243012465.jpg")
+# with open('../LLaDA-AV/data/nuscenes_drive_data_single_image_val_v2.json', 'r') as f:
+with open(config.data_path, 'r') as f:
+    data_val = json.load(f)
+
+total_time = 0
+
+conv_template = config.conv_template 
+
+inference_results = []
+
+
+def _format_action_tokens(sample: dict) -> str:
+    action_targets = sample.get("action_targets", [])
+    if action_targets:
+        formatted = "".join(
+            f"[{pt[0]:.2f}, {pt[1]:.2f}], " for pt in action_targets[:10]
+        )
+        if formatted:
+            return formatted
+
+    raw_answer = sample["conversations"][1]["value"]
+    matches = re.findall(r"\[([^\]]+)\]", raw_answer)
+    coords: list[str] = []
+    for match in matches[:10]:
+        parts = match.split(",")
+        if len(parts) < 2:
+            continue
+        try:
+            x = float(parts[0])
+            y = float(parts[1])
+        except ValueError:
+            continue
+        coords.append(f"[{round(x, 2):.2f}, {round(y, 2):.2f}], ")
+    if coords:
+        return "".join(coords)
+
+    coord_line = raw_answer.splitlines()[0]
+    if not coord_line.endswith(" "):
+        coord_line += " "
+    return coord_line
+
+
+def _extract_action_token_ids(sequence: torch.Tensor, valid_ids: list[int], limit: int = 10) -> list[int]:
+    valid_set = set(valid_ids)
+    collected: list[int] = []
+    for token_id in sequence.flatten().tolist():
+        if token_id in valid_set:
+            collected.append(token_id)
+            if len(collected) >= limit:
+                break
+    return collected
+
+# inference_results_len = len(inference_results)
+# inference_results = []
+# print(f"Inference results length: {inference_results_len}")
+for i, data_sample in enumerate(data_val):
+    # if i < inference_results_len:
+    #     continue
+    # image = Image.open(data_sample['image'])
+    # image_tensor = process_images([image], image_processor, model.config)
+    # image_tensor = [_image.to(dtype=torch.float16, device=config.device) for _image in image_tensor]
+    # image_sizes = [image.size]
+    formatted_tokens = _format_action_tokens(data_sample)
+    question = "Generate these ten waypoints in the action token format:" + formatted_tokens
+    print(question)
+
+    conv = copy.deepcopy(conv_templates[conv_template])
+    conv.append_message(conv.roles[0], question)
+    # conv.append_message(conv.roles[1], None)
+    prompt_question = conv.get_prompt()
+
+    model.eval()
+
+    if config.use_cache:
+        dLLMCache.new_instance(
+            **asdict(
+                dLLMCacheConfig(
+                    prompt_interval_steps=config.prompt_interval_steps,
+                    gen_interval_steps=config.gen_interval_steps,
+                    transfer_ratio=config.transfer_ratio,
+                )
+            )
+        )
+        register_cache_LLaDA_V(model, "model.layers")
+        print("Testing with cache enabled")
+    else:
+        print("Testing without cache")
+        
+
+
+    input_ids = tokenizer_image_token(prompt_question, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(config.device)
+    # image_sizes = [image.size]
+
+    start_time = time.time()
+    cont = model.generate(
+        input_ids,
+        steps=config.generation_steps,
+        gen_length=config.generation_length,
+        block_length=config.generation_block_length,
+        tokenizer=tokenizer,
+        stopping_criteria=list(config.stopping_criteria),
+    )
+    end_time = time.time()
+    generation_time = end_time - start_time
+    print(f"Generation time: {generation_time:.4f} seconds")
+    total_time += generation_time
+
+    # print(cont)
+    from pathlib import Path
+    from tokenizer.example_usage import load_point_tokenizer
+    weights_file = Path(config.tokenizer_weights)
+    if not weights_file.exists():
+        raise FileNotFoundError()
+
+    point_tokenizer = load_point_tokenizer(weights_file)
+    ids_array = np.load(config.unused_token_ids_path)
+    ids_list = ids_array.tolist()
+    id_to_index = {token: idx for idx, token in enumerate(ids_list)}
+
+    action_token_ids = _extract_action_token_ids(cont, ids_list, limit=10)
+    if len(action_token_ids) < 10:
+        print(f"Warning: detected {len(action_token_ids)} action tokens; expecting 10")
+
+    if action_token_ids:
+        indices = torch.tensor(
+            [id_to_index[token] for token in action_token_ids],
+            device=point_tokenizer.centers.device,
+        )
+        recovered_point = point_tokenizer.indices_to_points(indices)
+    else:
+        recovered_point = torch.empty((0, 2))
+    
+    text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=False)
+    print(text_outputs)
+    print(recovered_point)
+
+    inference_results.append([
+        str(recovered_point.tolist())[1:-1],
+        formatted_tokens.strip(),
+    ])
+
+# with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
+with open(config.results_path, 'w') as f:
+    json.dump(inference_results, f)
+print(f"Saved inference results for {i}th data sample")
+
+print(f"Total time: {total_time:.4f} seconds")
+print(f"Average time: {total_time/len(inference_results):.4f} seconds")
+# with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
+#     f.write(f"Total Steps: {128}\n")
+#     f.write(f"Total time: {total_time:.4f} seconds\n")
+#     f.write(f"Average time: {total_time/len(inference_results):.4f} seconds")

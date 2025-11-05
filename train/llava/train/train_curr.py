@@ -83,6 +83,7 @@ if isinstance(ids_to_replace, np.ndarray):
     model_action_token_ids = ids_to_replace.tolist()
 else:
     model_action_token_ids = list(ids_to_replace)       # point_embeddings = torch.randn(2048, 4096, device=model.device, dtype=model.dtype) # so use random embeddings for now
+
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
@@ -813,9 +814,38 @@ def preprocess_llada(
         language_content = ''
         action_content = ''
         action_token_ids: List[int] = []
-        random_points = all_points[np.random.randint(0, len(all_points), 10)]
-        for point in random_points:
-            embed, local_point_id = point_tokenizer.encode_points((point[0], point[1]))
+
+        target_points: List[tuple[float, float]] = []
+        for conv in source:
+            role = conv.get("role") or conv.get("from")
+            if role not in {"assistant", "gpt"}:
+                continue
+            raw_content = conv.get("content") if "content" in conv else conv.get("value", "")
+            if not isinstance(raw_content, str):
+                continue
+            matches = re.findall(r"\[([^\]]+)\]", raw_content)
+            for match in matches:
+                parts = match.split(",")
+                if len(parts) < 2:
+                    continue
+                try:
+                    x = float(parts[0])
+                    y = float(parts[1])
+                except ValueError:
+                    continue
+                target_points.append((x, y))
+            if target_points:
+                break
+
+        if not target_points:
+            raise ValueError("No target points found")
+            # random_points = all_points[np.random.randint(0, len(all_points), 10)]
+            # target_points = [(float(p[0]), float(p[1])) for p in random_points]
+
+        for point in target_points[:10]:
+            x = float(point[0])
+            y = float(point[1])
+            embed, local_point_id = point_tokenizer.encode_points((x, y))
             point_id = ids_to_replace[local_point_id]
             action_token_ids.append(point_id)
             # token = tokenizer.convert_ids_to_tokens([point_id])[0]
@@ -2021,91 +2051,91 @@ def train(attn_implementation=None):
         model.config.mm_spatial_pool_stride = model_args.mm_spatial_pool_stride 
 
         ### Deciding train which part of the model
-        if model_args.mm_tunable_parts is None:  # traditional way of deciding which part to train
-            model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
-            model.config.tune_mm_vision_resampler = training_args.tune_mm_vision_resampler = model_args.tune_mm_vision_resampler
-            if model_args.tune_mm_mlp_adapter or model_args.tune_mm_vision_resampler:
-                model.requires_grad_(False)
-            if model_args.tune_mm_mlp_adapter:
-                for p in model.get_model().mm_projector.parameters():
-                    p.requires_grad = True
-            if model_args.tune_mm_vision_resampler:
-                for p in model.get_model().vision_resampler.parameters():
-                    p.requires_grad = True
+        # if model_args.mm_tunable_parts is None:  # traditional way of deciding which part to train
+        #     model.config.tune_mm_mlp_adapter = training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
+        #     model.config.tune_mm_vision_resampler = training_args.tune_mm_vision_resampler = model_args.tune_mm_vision_resampler
+        #     if model_args.tune_mm_mlp_adapter or model_args.tune_mm_vision_resampler:
+        #         model.requires_grad_(False)
+        #     if model_args.tune_mm_mlp_adapter:
+        #         for p in model.get_model().mm_projector.parameters():
+        #             p.requires_grad = True
+        #     if model_args.tune_mm_vision_resampler:
+        #         for p in model.get_model().vision_resampler.parameters():
+        #             p.requires_grad = True
 
-            model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
-            if training_args.freeze_mm_mlp_adapter:
-                for p in model.get_model().mm_projector.parameters():
-                    p.requires_grad = False
+        #     model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
+        #     if training_args.freeze_mm_mlp_adapter:
+        #         for p in model.get_model().mm_projector.parameters():
+        #             p.requires_grad = False
 
-            model.config.freeze_mm_vision_resampler = training_args.freeze_mm_vision_resampler
-            if training_args.freeze_mm_vision_resampler:
-                for p in model.get_model().vision_resampler.parameters():
-                    p.requires_grad = False
+        #     model.config.freeze_mm_vision_resampler = training_args.freeze_mm_vision_resampler
+        #     if training_args.freeze_mm_vision_resampler:
+        #         for p in model.get_model().vision_resampler.parameters():
+        #             p.requires_grad = False
 
-            model.config.unfreeze_mm_vision_tower = model_args.unfreeze_mm_vision_tower
-            if model_args.unfreeze_mm_vision_tower:
-                vision_tower.requires_grad_(True)
-            else:
-                vision_tower.requires_grad_(False)
+        #     model.config.unfreeze_mm_vision_tower = model_args.unfreeze_mm_vision_tower
+        #     if model_args.unfreeze_mm_vision_tower:
+        #         vision_tower.requires_grad_(True)
+        #     else:
+        #         vision_tower.requires_grad_(False)
 
-        else:
-            rank0_print(f"Using mm_tunable_parts: {model_args.mm_tunable_parts}")
-            model.config.mm_tunable_parts = training_args.mm_tunable_parts = model_args.mm_tunable_parts
+        # else:
+        #     rank0_print(f"Using mm_tunable_parts: {model_args.mm_tunable_parts}")
+        #     model.config.mm_tunable_parts = training_args.mm_tunable_parts = model_args.mm_tunable_parts
             
-            # Check if LoRA/PEFT is enabled - if so, we need to access base model differently
-            # PEFT models typically have a 'base_model' attribute or can be identified by their class name
-            has_peft = (hasattr(model, 'base_model') and model.base_model is not None) or \
-                       (hasattr(model, 'peft_config') and model.peft_config is not None and len(model.peft_config) > 0) or \
-                       'Peft' in type(model).__name__
+        #     # Check if LoRA/PEFT is enabled - if so, we need to access base model differently
+        #     # PEFT models typically have a 'base_model' attribute or can be identified by their class name
+        #     has_peft = (hasattr(model, 'base_model') and model.base_model is not None) or \
+        #                (hasattr(model, 'peft_config') and model.peft_config is not None and len(model.peft_config) > 0) or \
+        #                'Peft' in type(model).__name__
             
-            # Get the actual model object (base model if PEFT, otherwise the model itself)
-            if has_peft and hasattr(model, 'base_model'):
-                actual_model = model.base_model
-                rank0_print("PEFT detected - accessing base model for parameter unfreezing")
-            else:
-                actual_model = model
+        #     # Get the actual model object (base model if PEFT, otherwise the model itself)
+        #     if has_peft and hasattr(model, 'base_model'):
+        #         actual_model = model.base_model
+        #         rank0_print("PEFT detected - accessing base model for parameter unfreezing")
+        #     else:
+        #         actual_model = model
             
-            # Set the entire model to not require gradients by default
-            # Only freeze if LoRA is not enabled (if LoRA is enabled, PEFT already froze base params)
-            if not has_peft:
-                actual_model.requires_grad_(False)
-            vision_tower.requires_grad_(False)
-            actual_model.get_model().mm_projector.requires_grad_(False)
-            if hasattr(actual_model.get_model(), 'vision_resampler'):
-                actual_model.get_model().vision_resampler.requires_grad_(False)
+        #     # Set the entire model to not require gradients by default
+        #     # Only freeze if LoRA is not enabled (if LoRA is enabled, PEFT already froze base params)
+        #     if not has_peft:
+        #         actual_model.requires_grad_(False)
+        #     vision_tower.requires_grad_(False)
+        #     actual_model.get_model().mm_projector.requires_grad_(False)
+        #     if hasattr(actual_model.get_model(), 'vision_resampler'):
+        #         actual_model.get_model().vision_resampler.requires_grad_(False)
             
-            # Parse the mm_tunable_parts to decide which parts to unfreeze
-            tunable_parts = model_args.mm_tunable_parts.split(",")
+        #     # Parse the mm_tunable_parts to decide which parts to unfreeze
+        #     tunable_parts = model_args.mm_tunable_parts.split(",")
             
-            if "mm_mlp_adapter" in tunable_parts:
-                for p in actual_model.get_model().mm_projector.parameters():
-                    p.requires_grad = True
+        #     if "mm_mlp_adapter" in tunable_parts:
+        #         for p in actual_model.get_model().mm_projector.parameters():
+        #             p.requires_grad = True
             
-            if "mm_vision_resampler" in tunable_parts:
-                if hasattr(actual_model.get_model(), 'vision_resampler'):
-                    for p in actual_model.get_model().vision_resampler.parameters():
-                        p.requires_grad = True
+        #     if "mm_vision_resampler" in tunable_parts:
+        #         if hasattr(actual_model.get_model(), 'vision_resampler'):
+        #             for p in actual_model.get_model().vision_resampler.parameters():
+        #                 p.requires_grad = True
             
-            if "mm_vision_tower" in tunable_parts:
-                for name, param in actual_model.named_parameters():
-                    if "vision_tower" in name:
-                        param.requires_grad_(True)
+        #     if "mm_vision_tower" in tunable_parts:
+        #         for name, param in actual_model.named_parameters():
+        #             if "vision_tower" in name:
+        #                 param.requires_grad_(True)
             
-            if "mm_language_model" in tunable_parts:
-                # Unfreeze language model parameters (exclude vision, projector, resampler, and LoRA adapters)
-                # Note: When LoRA is enabled, base model params are frozen by PEFT by default
-                # We need to manually unfreeze them if training the full language model
-                unfrozen_count = 0
-                for name, param in actual_model.named_parameters():
-                    if ("vision_tower" not in name and 
-                        "mm_projector" not in name and 
-                        "vision_resampler" not in name and 
-                        "lora" not in name.lower()):
-                        param.requires_grad_(True)
-                        unfrozen_count += 1
-                if has_peft:
-                    rank0_print(f"Unfrozen {unfrozen_count} base model parameters for language model training (LoRA is enabled)")
+        #     if "mm_language_model" in tunable_parts:
+        #         # Unfreeze language model parameters (exclude vision, projector, resampler, and LoRA adapters)
+        #         # Note: When LoRA is enabled, base model params are frozen by PEFT by default
+        #         # We need to manually unfreeze them if training the full language model
+        #         unfrozen_count = 0
+        #         for name, param in actual_model.named_parameters():
+        #             if ("vision_tower" not in name and 
+        #                 "mm_projector" not in name and 
+        #                 "vision_resampler" not in name and 
+        #                 "lora" not in name.lower()):
+        #                 param.requires_grad_(True)
+        #                 unfrozen_count += 1
+        #         if has_peft:
+        #             rank0_print(f"Unfrozen {unfrozen_count} base model parameters for language model training (LoRA is enabled)")
 
         total_params = sum(p.ds_numel if hasattr(p, "ds_numel") else p.numel() for p in model.parameters())
         trainable_params = sum(p.ds_numel if hasattr(p, "ds_numel") else p.numel() for p in model.parameters() if p.requires_grad)

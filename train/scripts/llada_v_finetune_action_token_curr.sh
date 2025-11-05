@@ -43,7 +43,7 @@ VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 
 PROMPT_VERSION="llava_llada"
 
-BASE_RUN_NAME="VLA_finetune_train_curr"
+BASE_RUN_NAME="VLA_finetune_train_curr_longer_lora"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 python \
@@ -55,7 +55,7 @@ python \
     --video_folder "/" \
     --lora_enable True \
     --lora_r 64 \
-    --mm_tunable_parts="mm_mlp_adapter,mm_language_model" \
+    --mm_tunable_parts="" \
     --mm_vision_tower_lr=2e-6 \
     --vision_tower ${VISION_MODEL_VERSION} \
     --mm_projector_type mlp2x_gelu \
@@ -70,15 +70,15 @@ python \
     --bf16 True \
     --run_name $BASE_RUN_NAME \
     --output_dir "exp/$BASE_RUN_NAME" \
-    --num_train_epochs 1 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
+    --num_train_epochs 4 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 1 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
     --save_steps 5000 \
     --save_total_limit 1 \
-    --learning_rate 1e-5 \
+    --learning_rate 1e-4 \
     --weight_decay 0. \
     --warmup_ratio 0.03 \
     --lr_scheduler_type "cosine" \
