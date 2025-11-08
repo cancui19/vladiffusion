@@ -68,9 +68,9 @@ class NuScenesVLAInferenceGilbrethConfig:
 
 config_curr = NuScenesVLAInferenceGilbrethConfig(
     job_name="nuscenes_lora_vla_explanation",
-    lora_path="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_train_curr_longer",
+    lora_path="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_train_curr_longer_lora",
     data_path="data/nuscenes_waypoint_text_long_prompt_val.json",
-    results_path="/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_curr_longer.json",
+    results_path="/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_curr_longer_lora.json",
     generation_steps=20,
     generation_length=20,
     generation_block_length=20
