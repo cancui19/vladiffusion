@@ -35,6 +35,13 @@ from tokenizer.example_usage import load_point_tokenizer
 
 
 ROOT = Path(__file__).resolve().parent.parent
+POLICIES = {
+    "greedy": dict(do_sample=False),
+    "top_p_0.9": dict(do_sample=True, top_p=0.9, temperature=1.0),
+    "top_k_20": dict(do_sample=True, top_k=20, temperature=1.0),
+    "temp_0.7": dict(do_sample=True, temperature=0.7),
+    "top_p_0.9_temp_0.7": dict(do_sample=True, top_p=0.9, temperature=0.7),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Log detailed metrics for each processed sample.",
+    )
+    parser.add_argument(
+        "--policy",
+        type=str,
+        default="greedy",
+        choices=POLICIES.keys(),
+        help="Sampling policy to use for generation.",
     )
     return parser.parse_args()
 
@@ -150,6 +164,8 @@ def compute_displacement_errors(
 
 def main() -> None:
     args = parse_args()
+    policy_kwargs = dict(POLICIES[args.policy])
+    print(f"Using generation policy: {args.policy} -> {policy_kwargs}")
 
     print("Loading dataset...")
     data_samples = load_dataset(config.data_path)
@@ -220,6 +236,7 @@ def main() -> None:
                 block_length=config.generation_block_length,
                 tokenizer=tokenizer,
                 stopping_criteria=list(config.stopping_criteria),
+                **policy_kwargs,
             )
 
         maybe_synchronize(device)

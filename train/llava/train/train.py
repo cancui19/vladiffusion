@@ -81,6 +81,9 @@ if isinstance(ids_to_replace, np.ndarray):
     model_action_token_ids = ids_to_replace.tolist()
 else:
     model_action_token_ids = list(ids_to_replace)       # point_embeddings = torch.randn(2048, 4096, device=model.device, dtype=model.dtype) # so use random embeddings for now
+ACTION_TOKEN_IDS = torch.tensor(model_action_token_ids, dtype=torch.long)
+ACTION_ID_TO_INDEX = {int(tid): idx for idx, tid in enumerate(model_action_token_ids)}
+ACTION_COORDS = point_tokenizer.indices_to_points(torch.arange(len(model_action_token_ids))).to(torch.float32)
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
@@ -196,6 +199,7 @@ class TrainingArguments(transformers.TrainingArguments):
     verbose_logging: bool = field(default=False)
     attn_implementation: str = field(default="flash_attention_2", metadata={"help": "Use transformers attention implementation."})
     use_conversation_mask: bool=field(default=True)
+    coord_loss_weight: float = field(default=0.0, metadata={"help": "Weight for coordinate regression auxiliary loss."})
 
 
 # @dataclass

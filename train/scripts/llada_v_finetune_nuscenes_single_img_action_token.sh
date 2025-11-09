@@ -103,7 +103,8 @@ torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER
     --dataloader_drop_last True \
     --attn_implementation sdpa \
     --use_conversation_mask False \
-    --deepspeed train/scripts/zero2.json
+    --deepspeed train/scripts/zero2.json \
+    --coord_loss_weight 0.5
 
 # torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER_ADDR} --master_port ${MASTER_PORT} --node_rank=${RANK} \
 #     /home/cancui/Research/LLaDA-V/train/llava/train/train_mem.py \

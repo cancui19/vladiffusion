@@ -95,6 +95,8 @@ for i, data_sample in enumerate(data_val):
         block_length=config.generation_block_length,
         tokenizer=tokenizer,
         stopping_criteria=list(config.stopping_criteria),
+        temperature=0.9,
+        repetition_penalty=1.2,
     )
     end_time = time.time()
     generation_time = end_time - start_time

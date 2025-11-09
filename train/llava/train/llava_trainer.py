@@ -1,7 +1,9 @@
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import datetime
+import numpy as np
 
 from accelerate import Accelerator
 from accelerate.utils import InitProcessGroupKwargs, GradientAccumulationPlugin
@@ -25,6 +27,13 @@ if is_datasets_available():
     import datasets
 
 from llava.utils import rank0_print
+from tokenizer.example_usage import load_point_tokenizer
+
+ACTION_IDS_ARRAY = np.load("tokenizer/unused_token_ids.npy")
+POINT_TOKENIZER = load_point_tokenizer("tokenizer/tokenizer_model.pth")
+ACTION_TOKEN_IDS = torch.tensor(ACTION_IDS_ARRAY.tolist(), dtype=torch.long)
+ACTION_ID_TO_INDEX = {int(tid): idx for idx, tid in enumerate(ACTION_TOKEN_IDS.tolist())}
+ACTION_COORDS = POINT_TOKENIZER.indices_to_points(torch.arange(len(ACTION_TOKEN_IDS))).to(torch.float32)
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -238,6 +247,42 @@ class LengthGroupedSampler(Sampler):
 
 
 class LLaVATrainer(Trainer):
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        outputs = model(**inputs)
+        if isinstance(outputs, dict):
+            loss = outputs.get("loss")
+            logits = outputs.get("logits")
+        else:
+            loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
+            logits = outputs.logits if hasattr(outputs, "logits") else None
+
+        coord_weight = getattr(self.args, "coord_loss_weight", 0.0)
+        labels = inputs.get("labels", None)
+        if coord_weight and coord_weight > 0 and logits is not None and labels is not None:
+            action_token_ids_tensor = ACTION_TOKEN_IDS.to(logits.device)
+            action_positions = torch.isin(labels, action_token_ids_tensor)
+            if action_positions.any():
+                flat_logits = logits.view(-1, logits.size(-1))
+                flat_labels = labels.view(-1)
+                flat_mask = action_positions.view(-1)
+                if flat_mask.any():
+                    selected_indices = torch.nonzero(flat_mask, as_tuple=False).squeeze(-1)
+                    selected_logits = flat_logits.index_select(0, selected_indices)[:, action_token_ids_tensor]
+                    probs = torch.softmax(selected_logits, dim=-1)
+                    coords_device = ACTION_COORDS.to(logits.device, dtype=probs.dtype)
+                    pred_coords = probs @ coords_device
+                    target_ids = flat_labels.index_select(0, selected_indices).tolist()
+                    target_indices = torch.tensor([ACTION_ID_TO_INDEX[int(tid)] for tid in target_ids], device=logits.device)
+                    target_coords = coords_device[target_indices]
+                    coord_loss = F.mse_loss(pred_coords, target_coords)
+                    loss = loss + coord_weight * coord_loss
+                    if isinstance(outputs, dict):
+                        outputs["loss"] = loss
+                    elif hasattr(outputs, "loss"):
+                        outputs.loss = loss
+
+        return (loss, outputs) if return_outputs else loss
 
     def create_accelerator_and_postprocess(self):
         grad_acc_kwargs = {"num_steps": self.args.gradient_accumulation_steps}
