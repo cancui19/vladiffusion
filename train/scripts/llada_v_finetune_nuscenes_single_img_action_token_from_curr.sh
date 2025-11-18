@@ -39,13 +39,16 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
+INIT_LORA_DIR="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_train_curr_longer_lora"
+INIT_CKPT="${INIT_LORA_DIR}"   # 看目录里实际存的是哪个 checkpoint
+
 
 ############### Finetune ################
 
 PROMPT_VERSION="llava_llada"
 
 DATE=$(date +%Y%m%d_%H%M)
-BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_${DATE}_from_scratch"
+BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_${DATE}_from_curr"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 
@@ -57,6 +60,7 @@ python -m llava.train.train_mem \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
     --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train.json" \
+    --lora_init_path ${INIT_CKPT} \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
