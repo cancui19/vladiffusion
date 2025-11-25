@@ -86,7 +86,7 @@ python -m llava.train.train_mem \
     --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 5000 \
+    --save_steps 1000 \
     --save_total_limit 1 \
     --learning_rate 5e-4 \
     --weight_decay 0. \

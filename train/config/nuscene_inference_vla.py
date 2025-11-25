@@ -33,9 +33,9 @@ config_from_curr = NuScenesVLAInferenceConfig(
     job_name="nuscenes_lora_vla_from_curr",
     pretrained="/scratch/gilbreth/cancui/models/LLaDA-V",
     model_name="llava_llada_lora",
-    lora_path="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train_20251113_1444_from_curr",
+    lora_path="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train_20251119_1334_from_curr",
     data_path="/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_val.json",
-    results_path="/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_from_curr.json",
+    results_path="/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_20251119_1334_from_curr.json",
     tokenizer_weights="/depot/ziran/apps/jiaru/projects/vladiffusion/tokenizer/tokenizer_model.pth",
     unused_token_ids_path="/depot/ziran/apps/jiaru/projects/vladiffusion/tokenizer/unused_token_ids.npy"
 )
