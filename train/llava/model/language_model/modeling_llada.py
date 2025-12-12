@@ -1844,8 +1844,13 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
         loss = None
         point_loss = None
+        action_token_accuracy = None
         # print(1111111111111111111)
         if labels is not None:
+            # print(">>> self.model.vision_tower.vision_tower.vision_model.encoder.layers[0].self_attn.k_proj.base_layer.bias.requires_grad")
+            # print(self.model.vision_tower.vision_tower.vision_model.encoder.layers[0].self_attn.k_proj.base_layer.bias.requires_grad)
+            # print(">>> self.model.vision_tower.vision_tower.vision_model.encoder.layers[0].self_attn.k_proj.lora_A.default.weight.requires_grad")
+            # print(self.model.vision_tower.vision_tower.vision_model.encoder.layers[0].self_attn.k_proj.lora_A.default.weight.requires_grad)
             action_token_ids = getattr(self.config, "action_token_ids", None)
             if action_token_ids is not None:
                 action_token_ids_tensor = torch.as_tensor(action_token_ids, device=logits.device, dtype=torch.long)
@@ -1860,6 +1865,22 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                         selected[:, ~vocab_mask] = torch.finfo(selected.dtype).min
                         flat_logits[flat_mask] = selected
                         logits = flat_logits.view_as(logits)
+
+                    action_eval_positions = action_positions & masked_indices
+                    if action_eval_positions.any():
+                        with torch.no_grad():
+                            predictions = torch.argmax(logits, dim=-1)
+                            correct = (predictions == labels) & action_eval_positions
+                            correct_count = correct.float().sum()
+                            total_count = action_eval_positions.float().sum()
+                            action_token_accuracy = (correct_count / total_count).detach()
+                    # elif flat_mask.any():
+                    #     action_token_accuracy = torch.full(  # pyright: ignore[reportUnusedVariable]
+                    #         (),
+                    #         float("nan"),
+                    #         device=logits.device,
+                    #         dtype=logits.dtype,
+                    #     )
             # Change for MDM
             # self.config.shortcut_loss_prob = 0
             if True:
@@ -1867,6 +1888,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                 token_loss = F.cross_entropy(logits[masked_indices], labels[masked_indices], ignore_index=-100,
                                          reduction='none') / p_mask[masked_indices]
                 loss = torch.sum(token_loss / noisy_data_length[masked_indices]) / labels.shape[0]
+                print(">>> action_token_accuracy", action_token_accuracy)
             else:
                 # shortcut loss
                 with torch.no_grad():
