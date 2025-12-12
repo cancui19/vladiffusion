@@ -1,21 +1,41 @@
+#!/bin/bash
+#SBATCH --job-name=vladiffusion_finetune_nuscenes_single_img_action_token
+#SBATCH --account=cis251316-ai
+#SBATCH --partition=ai
+#SBATCH --qos=ai
+
+#SBATCH --nodes=1
+#SBATCH --ntasks=96
+#SBATCH --cpus-per-task=1
+#SBATCH --gres=gpu:4
+#SBATCH --mem=720G
+#SBATCH --time=8:00:00
+
+#SBATCH --output=exp/slurm-%x-%j.out
+#SBATCH --error=exp/slurm-%x-%j.err
+
+module load conda
+conda activate vladiffusion
+
 set -x
 export OMP_NUM_THREADS=2
-export NCCL_IB_DISABLE=0
-export NCCL_IB_GID_INDEX=3
-export NCCL_SOCKET_IFNAME=ibp161s0
 export NCCL_DEBUG=WARN
 export NCCL_DEBUG_SUBSYS=ALL
+export NCCL_IB_DISABLE=1
+export NCCL_SOCKET_IFNAME=lo
+export NCCL_P2P_LEVEL=LOC
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 export PYTHONPATH="${REPO_ROOT}:${REPO_ROOT}/train:${PYTHONPATH}"
+export HF_HOME=$(findscratch)/hfcache
 
-num_node=$1
-gpu_num=$2
+# num_node=$1
+# gpu_num=$2
 
-# num_node=1
-# gpu_num=1
+num_node=1
+gpu_num=4
 
 
 # need to change num_node and gpu_num! 
@@ -33,8 +53,8 @@ echo "node_rank ${RANK}"
 echo "gpu_num ${gpu_num}"
 echo "num_node ${num_node}"
 
-LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
-# LLM_VERSION="GSAI-ML/LLaDA-V"
+# LLM_VERSION="/scratch/gilbreth/cancui/models/LLaDA-V"
+LLM_VERSION="GSAI-ML/LLaDA-V"
 LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
@@ -53,10 +73,11 @@ echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
     # train/llava/train/train_mem.py \
 # --ddp_find_unused_parameters True \
 
-python -m llava.train.train_mem \
+# python -m llava.train.train_mem \
+deepspeed --num_gpus=${gpu_num} train/llava/train/train_mem.py \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
-    --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train.json" \
+    --data_path "data/nuscenes_waypoint_text_long_prompt_train.json" \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
@@ -75,7 +96,7 @@ python -m llava.train.train_mem \
     --bits 16 \
     --bf16 True \
     --run_name $BASE_RUN_NAME \
-    --output_dir "/depot/ziran/apps/jiaru/projects/vladiffusion/exp/$BASE_RUN_NAME" \
+    --output_dir "/anvil/scratch/x-mgagvani/vladiffusion_scratch/$BASE_RUN_NAME" \
     --num_train_epochs 4 \
     --per_device_train_batch_size 4 \
     --per_device_eval_batch_size 4 \
@@ -92,14 +113,14 @@ python -m llava.train.train_mem \
     --tf32 False \
     --model_max_length 4096 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 0 \
+    --dataloader_num_workers 2 \
     --lazy_preprocess True \
-    --report_to tensorboard \
+    --report_to wandb \
     --torch_compile False \
     --dataloader_drop_last True \
     --attn_implementation sdpa \
     --use_conversation_mask False \
-    # --deepspeed train/scripts/zero2.json 
+    --deepspeed train/scripts/zero2.json 
 
 # torchrun --nproc_per_node=${gpu_num} --nnodes=${num_node} --master_addr=${MASTER_ADDR} --master_port ${MASTER_PORT} --node_rank=${RANK} \
 #     /home/cancui/Research/LLaDA-V/train/llava/train/train_mem.py \

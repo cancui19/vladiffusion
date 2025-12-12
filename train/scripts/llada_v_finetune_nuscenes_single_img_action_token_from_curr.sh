@@ -40,7 +40,7 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 INIT_LORA_DIR="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_train_curr_longer_lora"
-INIT_CKPT="${INIT_LORA_DIR}"   # 看目录里实际存的是哪个 checkpoint
+INIT_CKPT="${INIT_LORA_DIR}"   # look at which checkpoint is actually stored in the directory
 
 
 ############### Finetune ################

@@ -2,7 +2,7 @@ from collections import Counter
 import json
 from tqdm import tqdm
 from transformers import AutoTokenizer
-from datasets import load_dataset
+from datasets import load_dataset, Features, Value
 import numpy as np
 
 tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-V") # load from internet
@@ -23,8 +23,22 @@ def update_counts(text):
     counter.update(ids)
 
 # load dataset
-ds = load_dataset("YuYu2004/Traffic-VQA")
-all_questions = ds["train"]["question"]
+features = Features({
+    "optical_image_path": Value("string"),
+    "thermal_image_path": Value("string"),
+    "question_type": Value("string"),
+    "question": Value("string"),
+    "gt": Value("string"),
+    "question_id": Value("string"),
+})
+ds = load_dataset(
+    "json",
+    data_files="hf://datasets/YuYu2004/Traffic-VQA/train_dataset.json",
+    features=features,
+    split="train",
+)
+
+all_questions = ds["question"]
 
 print(f"Traffic dataset size: {len(all_questions)}")
 
@@ -39,7 +53,7 @@ with open("../data/nuscenes_waypoint_short_prompt_train.json", "r") as f:
             update_counts(turn["value"])
 
 
-least_used = [tok_id for tok_id, _ in counter.most_common()[::-1][:256]]
+least_used = [tok_id for tok_id, _ in counter.most_common()[::-1][:2048]]
 assert max(least_used) <= 126080
 print("IDs:", least_used[:10], "…", len(least_used))
 
