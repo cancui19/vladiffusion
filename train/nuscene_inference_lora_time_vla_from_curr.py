@@ -20,6 +20,22 @@ from llava.constants import IMAGE_TOKEN_INDEX
 from train.config.nuscene_inference_vla import config_from_curr as config
 from tokenizer.example_usage import load_point_tokenizer
 
+LEGACY_WAYPOINT_PROMPT = (
+    "Generate the predicted future waypoints in the format [x_1, y_1], [x_2, y_2], ..., "
+    "[x_10, y_10]. Write the raw text, not markdown or LaTeX. Future waypoints:"
+)
+ACTION_TOKEN_PROMPT = "Generate the predicted ten future waypoints in the action token format:"
+
+
+def _to_action_token_prompt(question: str) -> str:
+    """Align legacy text prompts with the action-token instruction used in training."""
+    if ACTION_TOKEN_PROMPT in question:
+        return question
+    if LEGACY_WAYPOINT_PROMPT in question:
+        print(1)
+        return question.replace(LEGACY_WAYPOINT_PROMPT, ACTION_TOKEN_PROMPT)
+    return question
+
 
 print("start")
 
@@ -88,7 +104,7 @@ for i, data_sample in enumerate(data_val):
     image_tensor = process_images([image], image_processor, model.config)
     image_tensor = [_image.to(dtype=torch.float16, device=config.device) for _image in image_tensor]
     image_sizes = [image.size]
-    question = data_sample['conversations'][0]['value']
+    question = _to_action_token_prompt(data_sample['conversations'][0]['value'])
     print(question)
 
     conv = copy.deepcopy(conv_templates[conv_template])

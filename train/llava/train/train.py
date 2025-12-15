@@ -826,7 +826,7 @@ def preprocess_llada(
                 pos_eol = raw_content.find('\n')
                 if pos_eol != -1:
                     points_str = raw_content[:pos_eol]
-                    explanation_str = raw_content[pos_eol + 1:].replace('\n', '.')
+                    explanation_str = raw_content[pos_eol + 1:]
                 else:
                     points_str = raw_content
                     explanation_str = ''

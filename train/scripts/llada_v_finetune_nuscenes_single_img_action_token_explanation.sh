@@ -39,11 +39,14 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
 
+INIT_LORA_DIR="/depot/ziran/apps/jiaru/projects/vladiffusion/exp/VLA_finetune_nuscenes_single_image_train_20251119_1334_from_curr"
+INIT_CKPT="${INIT_LORA_DIR}"   # 看目录里实际存的是哪个 checkpoint
 ############### Finetune ################
 
 PROMPT_VERSION="llava_llada"
 
-BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_explanation"
+DATE=$(date +%Y%m%d_%H%M)
+BASE_RUN_NAME="VLA_finetune_nuscenes_single_image_train_from_planning_explanation_${DATE}"
 echo "BASE_RUN_NAME: ${BASE_RUN_NAME}"
 
 python \
@@ -51,11 +54,12 @@ python \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
     --data_path "/depot/ziran/apps/jiaru/projects/vladiffusion/data/nuscenes_waypoint_text_long_prompt_train_Nu_X.json" \
+    --lora_init_path ${INIT_CKPT} \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \
-    --lora_r 64 \
-    --mm_tunable_parts="mm_vision_tower,mm_mlp_adapter,mm_language_model" \
+    --lora_r 256 \
+    --mm_tunable_parts="" \
     --mm_vision_tower_lr=2e-6 \
     --vision_tower ${VISION_MODEL_VERSION} \
     --mm_projector_type mlp2x_gelu \
@@ -70,21 +74,21 @@ python \
     --bf16 True \
     --run_name $BASE_RUN_NAME \
     --output_dir "exp/$BASE_RUN_NAME" \
-    --num_train_epochs 1 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
-    --gradient_accumulation_steps 1 \
+    --num_train_epochs 8 \
+    --per_device_train_batch_size 4 \
+    --per_device_eval_batch_size 4 \
+    --gradient_accumulation_steps 8 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 5000 \
-    --save_total_limit 1 \
-    --learning_rate 1e-5 \
+    --save_steps 500 \
+    --save_total_limit 8 \
+    --learning_rate 5e-4 \
     --weight_decay 0. \
     --warmup_ratio 0.03 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 False \
-    --model_max_length 8192 \
+    --model_max_length 4096 \
     --gradient_checkpointing True \
     --dataloader_num_workers 0 \
     --lazy_preprocess True \

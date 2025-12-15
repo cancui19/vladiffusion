@@ -3,6 +3,7 @@ import copy
 import json
 import time
 import warnings
+from pathlib import Path
 
 from PIL import Image
 import numpy as np
@@ -17,6 +18,7 @@ from llava.model.builder import load_pretrained_model
 from llava.constants import IMAGE_TOKEN_INDEX
 
 from train.config.nuscene_inference_vla import config_explanation as config
+from tokenizer.example_usage import load_point_tokenizer
 
 
 print("start")
@@ -34,10 +36,38 @@ tokenizer, model, image_processor, max_length = load_pretrained_model(
 model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
 model = model.merge_and_unload()
 
+# --- Begin Tokenizer Embedding Transfer (from _from_curr.py) ---
+weights_file = Path(config.tokenizer_weights)
+if not weights_file.exists():
+    raise FileNotFoundError(f"Tokenizer weights not found at {weights_file}")
+
+tokenizer_state = torch.load(weights_file, map_location="cpu")
+point_embeddings = tokenizer_state["embedding.E"]
+
+ids_array = np.load(config.unused_token_ids_path)
+if isinstance(ids_array, np.ndarray):
+    action_token_id_list = ids_array.tolist()
+else:
+    action_token_id_list = list(ids_array)
+
+with torch.no_grad():
+    input_embeddings = model.get_input_embeddings()
+    point_embeddings_tensor = point_embeddings.to(
+        input_embeddings.weight.device,
+        dtype=input_embeddings.weight.dtype,
+    )
+    input_embeddings.weight[action_token_id_list] = point_embeddings_tensor
+    if hasattr(model, "lm_head") and model.lm_head.weight.shape[0] >= len(action_token_id_list):
+        model.lm_head.weight[action_token_id_list] = point_embeddings_tensor
+    if hasattr(model, "config"):
+        model.config.action_token_ids = action_token_id_list
+
+point_tokenizer = load_point_tokenizer(weights_file)
+id_to_index = {token: idx for idx, token in enumerate(action_token_id_list)}
+# --- End Tokenizer Embedding Transfer ---
+
 model.eval()
-# image = Image.open("test.jpg")
-# image = Image.open("/scratch/gilbreth/cancui/data/nuscenes/full/samples/CAM_FRONT/n008-2018-05-21-11-06-59-0400__CAM_FRONT__1526915243012465.jpg")
-# with open('../LLaDA-AV/data/nuscenes_drive_data_single_image_val_v2.json', 'r') as f:
+
 with open(config.data_path, 'r') as f:
     data_val = json.load(f)
 
@@ -47,16 +77,14 @@ conv_template = config.conv_template
 
 inference_results = []
 
-# inference_results_len = len(inference_results)
-# inference_results = []
-# print(f"Inference results length: {inference_results_len}")
 for i, data_sample in enumerate(data_val):
-    # if i < inference_results_len:
-    #     continue
     image = Image.open(data_sample['image'])
     image_tensor = process_images([image], image_processor, model.config)
     image_tensor = [_image.to(dtype=torch.float16, device=config.device) for _image in image_tensor]
     image_sizes = [image.size]
+    
+    # Use raw question from data, assuming prompt alignment isn't strictly needed or is already correct in val data
+    # If you need prompt alignment like in _from_curr.py, uncomment the logic below
     question = data_sample['conversations'][0]['value']
     print(question)
 
@@ -86,6 +114,7 @@ for i, data_sample in enumerate(data_val):
     image_sizes = [image.size]
 
     start_time = time.time()
+    # Note: Removed flatten() logic inside generate if it was implicit, standard generate returns [batch, seq_len]
     cont = model.generate(
         input_ids,
         images=image_tensor,
@@ -101,33 +130,43 @@ for i, data_sample in enumerate(data_val):
     print(f"Generation time: {generation_time:.4f} seconds")
     total_time += generation_time
 
-    # print(cont)
-    from pathlib import Path
-    from tokenizer.example_usage import load_point_tokenizer
-    weights_file = Path(config.tokenizer_weights)
-    if not weights_file.exists():
-        raise FileNotFoundError()
+    # Output parsing
+    # The model output `cont` contains [action_tokens (10)] + [explanation tokens]
+    # We need to slice carefully.
     
-    # points = cont[:, :10]
-    point_tokenizer = load_point_tokenizer(weights_file)
+    # Decode full output first to debug/check
+    full_text = tokenizer.batch_decode(cont, skip_special_tokens=False)[0]
+    # print("Full decoded:", full_text)
+    
+    # Parse points from the first 10 tokens
+    # Note: cont is [1, seq_len], so we take cont[0, :10]
+    generated_ids = cont[0]
+    
+    # Assuming first 10 tokens are action tokens as per training task
+    points_ids = generated_ids[:10]
+    explanation_ids = generated_ids[10:]
+    
+    # Recover points
     ids_tensor = torch.from_numpy(np.load(config.unused_token_ids_path)).to(config.device)
-    pos_in_sorted = torch.searchsorted(-ids_tensor, -cont.flatten()[:10])      
-    recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)
+    # searchsorted expects 1D input
+    pos_in_sorted = torch.searchsorted(-ids_tensor, -points_ids)      
+    recovered_points = point_tokenizer.indices_to_points(pos_in_sorted)
     
-    text_outputs = tokenizer.batch_decode(cont[:, 10:], skip_special_tokens=False)
-    print(text_outputs)
-    print(recovered_point)
+    # Decode explanation
+    explanation_text = tokenizer.decode(explanation_ids, skip_special_tokens=True)
+    
+    print("Explanation:", explanation_text)
+    print("Points:", recovered_points)
 
-    inference_results.append([str(recovered_point.tolist())[1:-1],  text_outputs,  data_sample['conversations'][1]['value']])
+    inference_results.append([
+        str(recovered_points.tolist())[1:-1], 
+        explanation_text, 
+        data_sample['conversations'][1]['value']
+    ])
 
-# with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
 with open(config.results_path, 'w') as f:
     json.dump(inference_results, f)
 print(f"Saved inference results for {i}th data sample")
 
 print(f"Total time: {total_time:.4f} seconds")
 print(f"Average time: {total_time/len(inference_results):.4f} seconds")
-# with open(f'/scratch/gilbreth/cancui/LLaDA-V/results/nuscenes_drive_data_single_image_val_inference_lora_{job_name}_time.txt', 'w') as f:
-#     f.write(f"Total Steps: {128}\n")
-#     f.write(f"Total time: {total_time:.4f} seconds\n")
-#     f.write(f"Average time: {total_time/len(inference_results):.4f} seconds")

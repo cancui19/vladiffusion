@@ -2,6 +2,7 @@ import json
 import re
 from typing import Dict, Optional
 import evaluate
+
 bleu_metric = evaluate.load("bleu")
 rouge_metric = evaluate.load("rouge")
 meteor_metric = evaluate.load("meteor")
@@ -9,18 +10,28 @@ meteor_metric = evaluate.load("meteor")
 total_bleu_narration_score = 0
 total_rouge_narration_score = 0
 total_meteor_narration_score = 0
+
 total_bleu_reasoning_score = 0
 total_rouge_reasoning_score = 0
 total_meteor_reasoning_score = 0
+
+total_bleu_combined_score = 0
+total_rouge_combined_score = 0
+total_meteor_combined_score = 0
+
 COUNT_MISSING = False
 missing_narration_count = 0
 missing_reasoning_count = 0
+
 narration_count = 0
 reasoning_count = 0
+combined_count = 0
 
 
 def _extract_segments(text: str) -> Dict[str, str]:
     """解析单条文本，提取 Action/Narration/Reasoning/Description 等段落。"""
+    if not isinstance(text, str):
+        return {}
     label_pattern = re.compile(r"(Action|Narration|Reasoning|Description)\s*[:：]+", re.IGNORECASE)
     matches = list(label_pattern.finditer(text))
     if not matches:
@@ -44,11 +55,31 @@ def _normalize(text: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-with open('/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_init.json', 'r') as f:
+def _strip_coords(text: str) -> str:
+    """去除文本开头的坐标部分，保留从第一个标签开始的文本。"""
+    if not isinstance(text, str):
+        return ""
+    # 查找第一个文本标签的位置 (Narration, Reasoning, Description)
+    # 忽略 Action，因为 Action 可能包含坐标
+    match = re.search(r"(Narration|Reasoning|Description)\s*[:：]+", text, re.IGNORECASE)
+    if match:
+        return text[match.start():]
+    # 如果没有找到标签，返回原文本（或者是空，取决于需求，这里假设返回原文本风险较小）
+    return text
+
+
+with open('/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_result.json', 'r') as f:
     exp = json.load(f)
 
 for item in exp:
-    text_outputs = item[1] if len(item) > 1 else []
+    # Fix: Handle item[1] being a string or a list
+    raw_output = item[1] if len(item) > 1 else []
+    if isinstance(raw_output, str):
+        text_outputs = [raw_output]
+    elif isinstance(raw_output, list):
+        text_outputs = raw_output
+    else:
+        text_outputs = []
 
     narration: Optional[str] = None
     reasoning: Optional[str] = None
@@ -95,7 +126,8 @@ for item in exp:
         if not reasoning:
             reasoning = ""
             
-    if narration is not None:
+    # Narration Evaluation
+    if narration is not None and narration_gt is not None:
         narration_bleu = bleu_metric.compute(predictions=[narration], references=[narration_gt])['bleu']
         narration_rouge = rouge_metric.compute(predictions=[narration], references=[narration_gt])['rougeL']
         narration_meteor = meteor_metric.compute(predictions=[narration], references=[narration_gt])['meteor']
@@ -108,7 +140,9 @@ for item in exp:
         narration_count += 1
     else:
         missing_narration_count += 1
-    if reasoning is not None:
+
+    # Reasoning Evaluation
+    if reasoning is not None and reasoning_gt is not None:
         reasoning_bleu = bleu_metric.compute(predictions=[reasoning], references=[reasoning_gt])['bleu']
         reasoning_rouge = rouge_metric.compute(predictions=[reasoning], references=[reasoning_gt])['rougeL']
         reasoning_meteor = meteor_metric.compute(predictions=[reasoning], references=[reasoning_gt])['meteor']
@@ -121,14 +155,53 @@ for item in exp:
         reasoning_count += 1
     else:
         missing_reasoning_count += 1
-        
+
+    # Combined Evaluation (Raw Text)
+    # 使用第一个 text output 作为 raw prediction (Top-1)
+    pred_raw = text_outputs[0] if text_outputs else ""
+    # 去除 GT 中的坐标部分，保留文本部分
+    gt_raw = _strip_coords(label_raw)
+    
+    # 同样对 Pred 做 _strip_coords 处理，以防 Pred 也包含坐标或者杂项，
+    # 并且确保对齐（都从第一个标签开始比）
+    pred_combined = _strip_coords(pred_raw).strip()
+    gt_combined = gt_raw.strip()
+    
+    if pred_combined and gt_combined:
+        combined_bleu = bleu_metric.compute(predictions=[pred_combined], references=[gt_combined])['bleu']
+        combined_rouge = rouge_metric.compute(predictions=[pred_combined], references=[gt_combined])['rougeL']
+        combined_meteor = meteor_metric.compute(predictions=[pred_combined], references=[gt_combined])['meteor']
+        print(f"Combined BLEU: {combined_bleu}")
+        print(f"Combined ROUGE: {combined_rouge}")
+        print(f"Combined METEOR: {combined_meteor}")
+        total_bleu_combined_score += combined_bleu
+        total_rouge_combined_score += combined_rouge
+        total_meteor_combined_score += combined_meteor
+        combined_count += 1
+
 print("missing narration count:", missing_narration_count)
 print("missing reasoning count:", missing_reasoning_count)
 print("narration count:", narration_count)
 print("reasoning count:", reasoning_count)
-print("average bleu narration score:", total_bleu_narration_score / narration_count)
-print("average rouge narration score:", total_rouge_narration_score / narration_count)
-print("average meteor narration score:", total_meteor_narration_score / narration_count)
-print("average bleu reasoning score:", total_bleu_reasoning_score / reasoning_count)
-print("average rouge reasoning score:", total_rouge_reasoning_score / reasoning_count)
-print("average meteor reasoning score:", total_meteor_reasoning_score / reasoning_count)
+print("combined count:", combined_count)
+
+if narration_count > 0:
+    print("average bleu narration score:", total_bleu_narration_score / narration_count)
+    print("average rouge narration score:", total_rouge_narration_score / narration_count)
+    print("average meteor narration score:", total_meteor_narration_score / narration_count)
+else:
+    print("No narration samples evaluated")
+
+if reasoning_count > 0:
+    print("average bleu reasoning score:", total_bleu_reasoning_score / reasoning_count)
+    print("average rouge reasoning score:", total_rouge_reasoning_score / reasoning_count)
+    print("average meteor reasoning score:", total_meteor_reasoning_score / reasoning_count)
+else:
+    print("No reasoning samples evaluated")
+
+if combined_count > 0:
+    print("average bleu combined score:", total_bleu_combined_score / combined_count)
+    print("average rouge combined score:", total_rouge_combined_score / combined_count)
+    print("average meteor combined score:", total_meteor_combined_score / combined_count)
+else:
+    print("No combined samples evaluated")
