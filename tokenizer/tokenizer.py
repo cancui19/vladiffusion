@@ -481,7 +481,7 @@ def train_loop(points, kmeans, transform=None, num_epochs=100, batch_size=512, l
 if __name__ == "__main__":
     # save_data() # Uncomment to re-save data from NuScenes
     points = np.load("points_xy.npy")
-    kmeans = get_clusters(points, num_clusters=(nc:=2048))
+    kmeans = get_clusters(points, num_clusters=(nc:=256))
     # viz(kmeans, points)
 
     points_normalized, kmeans, transform = preprocess(points, kmeans)

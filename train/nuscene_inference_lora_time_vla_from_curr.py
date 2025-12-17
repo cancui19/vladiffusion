@@ -9,6 +9,8 @@ from PIL import Image
 import numpy as np
 import torch
 from peft import PeftModel
+from tqdm import tqdm
+from random import sample
 
 from llava.cache import dLLMCache, dLLMCacheConfig
 from llava.conversation import conv_templates
@@ -17,7 +19,7 @@ from llava.mm_utils import process_images, tokenizer_image_token
 from llava.model.builder import load_pretrained_model
 from llava.constants import IMAGE_TOKEN_INDEX
 
-from train.config.nuscene_inference_vla import config_from_curr as config
+from train.config.nuscene_inference_vla import config
 from tokenizer.example_usage import load_point_tokenizer
 
 
@@ -27,7 +29,7 @@ warnings.filterwarnings("ignore")
 
 tokenizer, model, image_processor, max_length = load_pretrained_model(
     config.pretrained,
-    None,
+    config.model_base,
     config.model_name,
     attn_implementation="sdpa",
     device_map=config.device_map,
@@ -35,7 +37,6 @@ tokenizer, model, image_processor, max_length = load_pretrained_model(
 
 model = PeftModel.from_pretrained(model, config.lora_path, adapter_name="default")
 model = model.merge_and_unload()
-
 weights_file = Path(config.tokenizer_weights)
 if not weights_file.exists():
     raise FileNotFoundError(f"Tokenizer weights not found at {weights_file}")
@@ -78,10 +79,14 @@ conv_template = config.conv_template
 
 inference_results = []
 
+N_points = 2500
+val_sample = sample(range(len(data_val)), N_points)
+data_val_sample = [data_val[i] for i in val_sample]
+
 # inference_results_len = len(inference_results)
 # inference_results = []
 # print(f"Inference results length: {inference_results_len}")
-for i, data_sample in enumerate(data_val):
+for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
     # if i < inference_results_len:
     #     continue
     image = Image.open(data_sample['image'])
@@ -151,7 +156,7 @@ for i, data_sample in enumerate(data_val):
     inference_results.append([str(recovered_point.tolist())[1:-1], data_sample['conversations'][1]['value']])
 
 # with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
-with open(config.results_path, 'w') as f:
+with open("results/result3_j.json", 'w') as f:
     json.dump(inference_results, f)
 print(f"Saved inference results for {i}th data sample")
 

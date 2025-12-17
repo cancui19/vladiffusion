@@ -10,14 +10,14 @@ class NuScenesVLAInferenceConfig:
     gen_interval_steps: int = 7
     transfer_ratio: float = 0.25
     use_cache: bool = True
-    pretrained: str = "/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251209_1643_from_scratch"
+    pretrained: str = "/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251214_1307_from_curr"
     model_base: str = "GSAI-ML/LLaDA-V"
     model_name: str = "llava_llada_lora"
     device: str = "cuda:0"
     device_map: str = "cuda:0"
-    lora_path: str = "/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251209_1643_from_scratch"
+    lora_path: str = "/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_nuscenes_single_image_train_20251214_1307_from_curr"
     data_path: str = "data/nuscenes_waypoint_text_long_prompt_train.json"
-    results_path: str = "/home/x-mgagvani/vladiffusion/results/vla_20251209_1643.json"
+    results_path: str = "/home/x-mgagvani/vladiffusion/results/vla_20251214_1307.json"
     tokenizer_weights: str = "/home/x-mgagvani/vladiffusion/tokenizer/tokenizer_model.pth"
     unused_token_ids_path: str = "/home/x-mgagvani/vladiffusion/tokenizer/unused_token_ids.npy"
     conv_template: str = "llava_llada"
