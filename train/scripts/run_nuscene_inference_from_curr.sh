@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=nuscene_infer_from_curr
-#SBATCH --account=cis251316-gpu
-#SBATCH --partition=gpu
-#SBATCH --qos=gpu
+#SBATCH --account=cis251316-ai
+#SBATCH --partition=ai
+#SBATCH --qos=ai
 #SBATCH --chdir=/home/x-mgagvani/vladiffusion
 
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=96
 #SBATCH --gres=gpu:1
 #SBATCH --time=12:00:00
 

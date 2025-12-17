@@ -27,7 +27,7 @@ for pred_str, gt_str in entries:
 
 dataset_ade = total_ade / total_steps
 dataset_fde = total_fde / num_samples
-print(f"ADE={dataset_ade:.4f}, FDE={dataset_fde:.4f}")
+print(f"ADE@5s={dataset_ade:.4f}, FDE={dataset_fde:.4f}")
 
 ### 3s
 
@@ -49,4 +49,4 @@ for pred_str, gt_str in entries:
 
 dataset_ade = total_ade / total_steps
 dataset_fde = total_fde / num_samples
-print(f"ADE={dataset_ade:.4f}, FDE={dataset_fde:.4f}")
+print(f"ADE@3s={dataset_ade:.4f}, FDE={dataset_fde:.4f}")
