@@ -2,7 +2,7 @@ import json, ast, torch
 
 from train.nuscene_inference_lora_metrics import compute_displacement_errors
 
-path = "results/result3_j.json"
+path = "results/vla_20251222_1818.json"
 
 with open(path) as f:
     entries = json.load(f)

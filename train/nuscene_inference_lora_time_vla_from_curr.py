@@ -173,7 +173,7 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
     inference_results.append([str(recovered_point.tolist())[1:-1], data_sample['conversations'][1]['value']])
 
 # with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
-with open("results/result3_j.json", 'w') as f:
+with open(config.results_path, 'w') as f:
     json.dump(inference_results, f)
 print(f"Saved inference results for {i}th data sample")
 

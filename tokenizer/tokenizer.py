@@ -55,8 +55,13 @@ def save_data():
 
     VERSION = 'v1.0-trainval'
     DATAROOT = os.getenv("NUSCENES_ROOT")
-    dataset = NuScenesDataset(nuscenes_path=DATAROOT, version=VERSION, split='train', future_seconds=3, future_hz=2, get_img_data=False)
-    xy_points = get_xy_points(dataset)
+    xy_points = np.ndarray((0, 2), dtype=np.float32)
+    chunks = []
+    # ensure upon evaluation we have points that are representative
+    for split in ['train', 'val', 'test']:
+        dataset = NuScenesDataset(nuscenes_path=DATAROOT, version=VERSION, split=split, future_seconds=5, future_hz=2, get_img_data=False)
+        _points = get_xy_points(dataset)
+        xy_points = np.vstack([xy_points, _points])
     np.save("points_xy.npy", xy_points)
 
     print(f"Total number of points: {xy_points.shape[0]}")
@@ -479,16 +484,16 @@ def train_loop(points, kmeans, transform=None, num_epochs=100, batch_size=512, l
     return model
 
 if __name__ == "__main__":
-    # save_data() # Uncomment to re-save data from NuScenes
+    save_data() # Uncomment to re-save data from NuScenes
     points = np.load("points_xy.npy")
-    kmeans = get_clusters(points, num_clusters=(nc:=256))
+    kmeans = get_clusters(points, num_clusters=(nc:=512))
     # viz(kmeans, points)
 
     points_normalized, kmeans, transform = preprocess(points, kmeans)
     viz(kmeans, points_normalized)
 
     # train
-    wandb.init(project="vladiffusion", name=f"tok_{nc}pts_3s")
+    wandb.init(project="vladiffusion", name=f"tok_{nc}pts_5s")
     model = train_loop(points_normalized, kmeans, transform=transform, num_epochs=100, batch_size=4096, lr=1.5e-4, device='cuda')
     torch.save(model.state_dict(), "tokenizer_model.pth")
     wandb.finish()

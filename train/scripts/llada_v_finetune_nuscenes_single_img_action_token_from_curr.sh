@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --gres=gpu:4
 #SBATCH --mem=720G
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 
 #SBATCH --output=exp/slurm-%x-%j.out
 #SBATCH --error=exp/slurm-%x-%j.err
@@ -59,7 +59,7 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
-INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251213_2349"
+INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251222_1712"
 INIT_CKPT="${INIT_LORA_DIR}"   # look at which checkpoint is actually stored in the directory
 
 

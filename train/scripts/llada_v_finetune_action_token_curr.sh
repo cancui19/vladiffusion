@@ -109,7 +109,7 @@ deepspeed --num_gpus=${gpu_num} \
     --tf32 False \
     --model_max_length 4096 \
     --gradient_checkpointing True \
-    --dataloader_num_workers 2 \
+    --dataloader_num_workers 6 \
     --lazy_preprocess True \
     --report_to wandb \
     --torch_compile False \
