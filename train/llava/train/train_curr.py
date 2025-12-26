@@ -869,7 +869,7 @@ def preprocess_llada(
             role =  roles.get(role, role)
             
             if role == 'user':
-                content = "Generate these ten waypoints in the action token format:"
+                content = "Generate these ten waypoints in the action token format: "
                 content = content + language_content
             elif role == 'assistant':
                 if assistant_prefix_tokens is None:

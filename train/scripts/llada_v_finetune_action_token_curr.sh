@@ -73,7 +73,7 @@ deepspeed --num_gpus=${gpu_num} \
     train/llava/train/train_mem_curr.py \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
-    --data_path "data/nuscenes_waypoint_text_long_prompt_train_Nu_X.json" \
+    --data_path "data/nuscenes_delta_text_long_prompt_train_Nu_X.json" \
     --image_folder "/" \
     --video_folder "/" \
     --lora_enable True \

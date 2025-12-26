@@ -59,7 +59,7 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
-INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251222_1712"
+INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251224_1009"
 INIT_CKPT="${INIT_LORA_DIR}"   # look at which checkpoint is actually stored in the directory
 
 
@@ -81,7 +81,7 @@ deepspeed --num_gpus=${gpu_num} \
     train/llava/train/train_mem.py \
     --model_name_or_path ${LLM_VERSION} \
     --version ${PROMPT_VERSION} \
-    --data_path "data/nuscenes_waypoint_text_long_prompt_train.json" \
+    --data_path "data/nuscenes_delta_text_long_prompt_train.json" \
     --lora_init_path ${INIT_CKPT} \
     --image_folder "/" \
     --video_folder "/" \

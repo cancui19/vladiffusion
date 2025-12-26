@@ -96,7 +96,7 @@ conv_template = config.conv_template
 
 inference_results = []
 
-N_points = 500
+N_points = 1000
 val_sample = sample(range(len(data_val)), N_points)
 data_val_sample = [data_val[i] for i in val_sample]
 
