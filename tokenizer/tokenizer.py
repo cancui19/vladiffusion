@@ -15,7 +15,7 @@ from typing import Optional, Tuple, Union
 
 import tqdm
 
-from tokenizer.nuscenes_dataset import NuScenesDataset
+from nuscenes_dataset import NuScenesDataset
 
 torch.manual_seed(42)
 
@@ -50,6 +50,31 @@ def get_xy_points(dataset: NuScenesDataset):
     all_xy = np.vstack(xy_points).astype(np.float32)
     return all_xy
 
+def get_xy_deltas(dataset: NuScenesDataset):
+    '''
+    rather than returning absolute xy points, return the deltas between consecutive points (e.g., velocity)
+    '''
+    delta_points = []
+
+    for i in tqdm.tqdm(range(len(dataset))):
+        item = dataset[i]
+        traj = item.get("trajectory", None)
+        if traj is None or traj.shape[0] == 0:
+            continue
+        
+        xy = traj[:, :2]
+
+        # Calculate deltas. 
+        # Prepend zeroes to ensure we get (P_x - 0, P_y - 0) initially
+        deltas = np.diff(xy, axis=0, prepend=np.zeros((1, 2)))
+        delta_points.append(deltas)
+
+    if not delta_points:
+        raise ValueError("No delta points were generated from the dataset.")
+
+    all_deltas = np.vstack(delta_points).astype(np.float32)
+    return all_deltas
+
 def save_data():
     load_dotenv()
 
@@ -58,23 +83,31 @@ def save_data():
     xy_points = np.ndarray((0, 2), dtype=np.float32)
     chunks = []
     # ensure upon evaluation we have points that are representative
-    for split in ['train', 'val', 'test']:
+    for split in ['train', 'val',]:
         dataset = NuScenesDataset(nuscenes_path=DATAROOT, version=VERSION, split=split, future_seconds=5, future_hz=2, get_img_data=False)
-        _points = get_xy_points(dataset)
+        _points = get_xy_deltas(dataset)
         xy_points = np.vstack([xy_points, _points])
     np.save("points_xy.npy", xy_points)
 
     print(f"Total number of points: {xy_points.shape[0]}")
     plt.figure(figsize=(8, 8))
     plt.scatter(xy_points[:, 0], xy_points[:, 1], s=0.1, alpha=0.5)
-    plt.title("Future Waypoints in Ego Vehicle Frame")
+    plt.title("Future Delta Positions in Ego Vehicle Frame")
     plt.xlabel("X (meters)")
     plt.ylabel("Y (meters)")
     plt.axis('equal')
     plt.grid(True)
-    plt.savefig("future_waypoints_ego_frame.png", dpi=300)
+    plt.savefig("future_delta_ego_frame.png", dpi=300)
 
-def get_clusters(points: np.ndarray, num_clusters=2048):
+def get_clusters(points: np.ndarray, num_clusters=2048, use_polar=False):
+    # convert to polar
+    xy = points
+    r = np.linalg.norm(xy, axis=1)
+    theta = np.arctan2(xy[:, 1], xy[:, 0])
+    polar_points = np.stack([r, theta], axis=1)     
+    if use_polar:
+        points = polar_points
+
     nbrs = NearestNeighbors(n_neighbors=16).fit(points)
     dists, _ = nbrs.kneighbors(points)
     # larger mean distance => lower density => higher weight
@@ -83,6 +116,16 @@ def get_clusters(points: np.ndarray, num_clusters=2048):
 
     kmeans = MiniBatchKMeans(n_clusters=num_clusters, batch_size=16384, random_state=42)
     kmeans.fit(points, sample_weight=w)
+
+    # fix kmeans._cluster_centers so that they are in the original xy space if use_polar is True
+    if use_polar:
+        centers = kmeans.cluster_centers_
+        r = centers[:, 0]
+        theta = centers[:, 1]
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+        kmeans.cluster_centers_ = np.stack([x, y], axis=1)
+
     return kmeans
 
 def viz(kmeans, points: np.ndarray):
@@ -484,13 +527,15 @@ def train_loop(points, kmeans, transform=None, num_epochs=100, batch_size=512, l
     return model
 
 if __name__ == "__main__":
-    save_data() # Uncomment to re-save data from NuScenes
+    # save_data() # Uncomment to re-save data from NuScenes
     points = np.load("points_xy.npy")
-    kmeans = get_clusters(points, num_clusters=(nc:=512))
+    kmeans = get_clusters(points, num_clusters=(nc:=256), use_polar=False)
     # viz(kmeans, points)
 
     points_normalized, kmeans, transform = preprocess(points, kmeans)
     viz(kmeans, points_normalized)
+
+    exit()
 
     # train
     wandb.init(project="vladiffusion", name=f"tok_{nc}pts_5s")
