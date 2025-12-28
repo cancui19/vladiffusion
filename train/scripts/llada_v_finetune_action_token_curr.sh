@@ -111,6 +111,13 @@ deepspeed --num_gpus=${gpu_num} \
     --gradient_checkpointing True \
     --dataloader_num_workers 6 \
     --lazy_preprocess True \
+    --action_balance True \
+    --action_balance_bins 5 \
+    --action_balance_feature mean_speed \
+    --action_balance_stop_thresh 0.1 \
+    --action_balance_power 1.0 \
+    --action_spatial_loss_weight 0.1 \
+    --action_spatial_loss_type cumsum \
     --report_to wandb \
     --torch_compile False \
     --dataloader_drop_last True \

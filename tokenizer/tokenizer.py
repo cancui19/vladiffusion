@@ -15,7 +15,7 @@ from typing import Optional, Tuple, Union
 
 import tqdm
 
-from nuscenes_dataset import NuScenesDataset
+from tokenizer.nuscenes_dataset import NuScenesDataset
 
 torch.manual_seed(42)
 

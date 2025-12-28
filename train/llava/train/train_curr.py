@@ -70,6 +70,10 @@ point_tokenizer = load_point_tokenizer(weights_file)
 ids_to_replace = np.load("tokenizer/unused_token_ids.npy")
 sd = torch.load("tokenizer/tokenizer_model.pth", map_location='cpu')
 point_embeddings = sd['embedding.E'] # should be (2048, 4096)
+point_centers = sd.get("embedding.C")
+point_center_scale = sd.get("scale", torch.tensor(1.0))
+point_center_translate = sd.get("translate", torch.zeros(2))
+point_centers = point_centers / point_center_scale - point_center_translate
 
 import numpy as np
 rng = np.random.default_rng(seed=42)  
@@ -165,6 +169,11 @@ class DataArguments:
     frames_upbound: Optional[int] = field(default=0)
     add_time_instruction: Optional[bool] = field(default=False)
     force_sample: Optional[bool] = field(default=False)
+    action_balance: bool = field(default=False, metadata={"help": "Enable action-token balancing sampler."})
+    action_balance_bins: int = field(default=5, metadata={"help": "Number of bins for action balancing."})
+    action_balance_feature: str = field(default="mean_speed", metadata={"help": "Feature for balancing: mean_speed|max_speed|stop_ratio."})
+    action_balance_stop_thresh: float = field(default=0.1, metadata={"help": "Stop threshold used when balancing by stop_ratio."})
+    action_balance_power: float = field(default=1.0, metadata={"help": "Exponent for inverse-frequency weights."})
 
 
 @dataclass
@@ -199,6 +208,8 @@ class TrainingArguments(transformers.TrainingArguments):
     verbose_logging: bool = field(default=False)
     attn_implementation: str = field(default="flash_attention_2", metadata={"help": "Use transformers attention implementation."})
     use_conversation_mask: bool=field(default=True)
+    action_spatial_loss_weight: float = field(default=0.0, metadata={"help": "Weight for spatial loss on action tokens."})
+    action_spatial_loss_type: str = field(default="delta", metadata={"help": "Spatial loss type: delta or cumsum."})
 
 
 # @dataclass
@@ -1390,9 +1401,58 @@ class LazySupervisedDataset(Dataset):
         rank0_print("Formatting inputs...Skip in lazy mode")
         self.tokenizer = tokenizer
         self.data_args = data_args
+        self.sample_weights = None
+        if self.data_args.action_balance:
+            self.sample_weights = self._compute_action_balance_weights()
 
     def __len__(self):
         return len(self.list_data_dict)
+
+    def _extract_action_score(self, sample: dict) -> Optional[float]:
+        action_targets = sample.get("action_targets")
+        if not action_targets:
+            return None
+        points = np.asarray(action_targets, dtype=np.float32)
+        if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] < 2:
+            return None
+        deltas = np.diff(points[:, :2], axis=0, prepend=np.zeros((1, 2), dtype=np.float32))
+        speeds = np.linalg.norm(deltas, axis=1)
+        feature = self.data_args.action_balance_feature
+        if feature == "mean_speed":
+            return float(speeds.mean())
+        if feature == "max_speed":
+            return float(speeds.max())
+        if feature == "stop_ratio":
+            return float((speeds < self.data_args.action_balance_stop_thresh).mean())
+        raise ValueError(f"Unknown action_balance_feature: {feature}")
+
+    def _compute_action_balance_weights(self) -> Optional[List[float]]:
+        scores = [self._extract_action_score(sample) for sample in self.list_data_dict]
+        valid_scores = [s for s in scores if s is not None]
+        if not valid_scores:
+            rank0_print("Action balance enabled but no valid action_targets found; disabling balancing.")
+            return None
+        bins = max(2, int(self.data_args.action_balance_bins))
+        quantiles = np.linspace(0.0, 1.0, bins + 1)
+        edges = np.quantile(valid_scores, quantiles)
+        if np.allclose(edges.min(), edges.max()):
+            rank0_print("Action balance scores are degenerate; disabling balancing.")
+            return None
+        if np.unique(edges).size < edges.size:
+            edges = np.linspace(edges.min(), edges.max(), bins + 1)
+        bin_ids = []
+        for score in scores:
+            if score is None:
+                bin_ids.append(-1)
+            else:
+                bin_ids.append(int(np.digitize(score, edges[1:-1], right=False)))
+        counts = np.bincount([b for b in bin_ids if b >= 0], minlength=bins)
+        max_count = counts.max() if counts.size else 1
+        power = float(self.data_args.action_balance_power)
+        bin_weights = (max_count / np.maximum(counts, 1)) ** power
+        bin_weights = bin_weights / bin_weights.mean() if bin_weights.mean() > 0 else bin_weights
+        rank0_print(f"Action balance bins={bins}, counts={counts.tolist()}")
+        return [float(bin_weights[b]) if b >= 0 else 1.0 for b in bin_ids]
 
     @property
     def lengths(self):
@@ -1964,6 +2024,21 @@ def train(attn_implementation=None):
                 model.to(torch.float16)
         rank0_print("Adding LoRA adapters...")
         model = get_peft_model(model, lora_config)
+
+    if hasattr(model, "get_input_embeddings"):
+        embed_weight = model.get_input_embeddings().weight
+        action_token_ids = torch.as_tensor(ids_to_replace, dtype=torch.long, device=embed_weight.device)
+        if point_centers.shape[0] != action_token_ids.numel():
+            raise ValueError(
+                f"Action token centers ({point_centers.shape[0]}) do not match token ids ({action_token_ids.numel()})."
+            )
+        action_centers = point_centers.to(device=embed_weight.device, dtype=embed_weight.dtype)
+        vocab_size = embed_weight.shape[0]
+        id_to_index = torch.full((vocab_size,), -1, dtype=torch.long, device=embed_weight.device)
+        id_to_index[action_token_ids] = torch.arange(action_token_ids.numel(), device=embed_weight.device)
+        model.action_token_ids = action_token_ids
+        model.action_token_centers = action_centers
+        model.action_token_id_to_index = id_to_index
 
     if "mistral" in model_args.model_name_or_path.lower() or "mixtral" in model_args.model_name_or_path.lower() or "zephyr" in model_args.model_name_or_path.lower():
         tokenizer = transformers.AutoTokenizer.from_pretrained(model_args.model_name_or_path, cache_dir=training_args.cache_dir, model_max_length=training_args.model_max_length, padding_side="left")

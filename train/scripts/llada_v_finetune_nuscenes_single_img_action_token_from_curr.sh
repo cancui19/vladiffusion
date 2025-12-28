@@ -59,7 +59,7 @@ LLM_VERSION_CLEAN="${LLM_VERSION//\//_}"
 # VISION_MODEL_VERSION="model/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION="google/siglip2-so400m-patch14-384"
 VISION_MODEL_VERSION_CLEAN="${VISION_MODEL_VERSION//\//_}"
-INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251224_1009"
+INIT_LORA_DIR="/anvil/scratch/x-mgagvani/vladiffusion_scratch/VLA_finetune_train_curr_longer_lora_20251226_1804"
 INIT_CKPT="${INIT_LORA_DIR}"   # look at which checkpoint is actually stored in the directory
 
 
@@ -120,6 +120,13 @@ deepspeed --num_gpus=${gpu_num} \
     --gradient_checkpointing True \
     --dataloader_num_workers 6 \
     --lazy_preprocess True \
+    --action_balance True \
+    --action_balance_bins 5 \
+    --action_balance_feature mean_speed \
+    --action_balance_stop_thresh 0.1 \
+    --action_balance_power 1.0 \
+    --action_spatial_loss_weight 0.1 \
+    --action_spatial_loss_type cumsum \
     --report_to wandb \
     --torch_compile False \
     --dataloader_drop_last True \

@@ -1,6 +1,8 @@
 import os
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import datetime
 
 from accelerate import Accelerator
@@ -237,6 +239,44 @@ class LengthGroupedSampler(Sampler):
         return iter(indices)
 
 
+class BalancedActionSampler(Sampler):
+    def __init__(
+        self,
+        weights: List[float],
+        num_samples: int,
+        replacement: bool,
+        seed: int,
+        rank: int,
+        world_size: int,
+    ):
+        self.weights = torch.as_tensor(weights, dtype=torch.double)
+        self.num_samples = int(num_samples)
+        self.replacement = replacement
+        self.seed = int(seed)
+        self.rank = int(rank)
+        self.world_size = int(world_size)
+        self.epoch = 0
+        self.total_size = self.num_samples * self.world_size
+
+    def __len__(self):
+        return self.num_samples
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + self.epoch)
+        indices = torch.multinomial(
+            self.weights,
+            num_samples=self.total_size,
+            replacement=self.replacement,
+            generator=generator,
+        )
+        indices = indices[self.rank:self.total_size:self.world_size]
+        return iter(indices.tolist())
+
+
 class LLaVATrainer(Trainer):
 
     def create_accelerator_and_postprocess(self):
@@ -273,6 +313,20 @@ class LLaVATrainer(Trainer):
     def _get_train_sampler(self) -> Optional[torch.utils.data.Sampler]:
         if self.train_dataset is None or not has_length(self.train_dataset):
             return None
+
+        sample_weights = getattr(self.train_dataset, "sample_weights", None)
+        if sample_weights is not None:
+            world_size = max(1, int(self.args.world_size))
+            num_samples = int(math.ceil(len(sample_weights) / world_size))
+            rank = getattr(self.args, "process_index", self.args.local_rank if self.args.local_rank != -1 else 0)
+            return BalancedActionSampler(
+                weights=sample_weights,
+                num_samples=num_samples,
+                replacement=True,
+                seed=self.args.seed,
+                rank=rank,
+                world_size=world_size,
+            )
 
         if self.args.group_by_length:
             lengths = self.train_dataset.lengths
@@ -355,6 +409,84 @@ class LLaVATrainer(Trainer):
             dataloader = self.accelerator.prepare(DataLoader(train_dataset, **dataloader_params))
 
         return dataloader
+
+    def _compute_action_spatial_loss(self, logits: torch.Tensor, labels: torch.Tensor, model: nn.Module) -> Optional[torch.Tensor]:
+        if not hasattr(model, "action_token_centers"):
+            return None
+        action_centers = model.action_token_centers
+        action_ids = model.action_token_ids
+        id_to_index = model.action_token_id_to_index
+
+        labels_device = action_centers.device
+        labels_on_device = labels.to(labels_device)
+        labels_safe = labels_on_device.clone()
+        labels_safe[labels_safe < 0] = 0
+        action_index = id_to_index[labels_safe]
+        action_mask = (labels_on_device >= 0) & (action_index >= 0)
+        if not action_mask.any():
+            return None
+
+        logits = logits.to(labels_device)
+        logits_action = logits[:, :, action_ids]
+        probs = torch.softmax(logits_action, dim=-1)
+        action_centers = action_centers.to(dtype=probs.dtype)
+        pred_delta = torch.einsum("bsk,kd->bsd", probs, action_centers)
+
+        loss_type = getattr(self.args, "action_spatial_loss_type", "delta")
+        pad_id = getattr(self.tokenizer, "pad_token_id", None) if hasattr(self, "tokenizer") else None
+        logits_len = logits.shape[1]
+        losses = []
+
+        for b in range(labels_on_device.shape[0]):
+            pos = action_mask[b].nonzero(as_tuple=True)[0]
+            if pos.numel() == 0:
+                continue
+            if pad_id is not None:
+                non_pad = labels_on_device[b] != pad_id
+                if non_pad.any():
+                    effective_len = int(non_pad.nonzero(as_tuple=True)[0][-1].item()) + 1
+                else:
+                    effective_len = labels_on_device.shape[1]
+            else:
+                effective_len = labels_on_device.shape[1]
+
+            offset = logits_len - effective_len
+            if offset < 0:
+                offset = 0
+            aligned = pos + offset
+            valid = aligned < logits_len
+            if not valid.any():
+                continue
+            aligned = aligned[valid]
+            pos = pos[valid]
+
+            pred_b = pred_delta[b, aligned]
+            gt_b = action_centers[action_index[b, pos].clamp_min(0)]
+            if loss_type == "delta":
+                losses.append(F.mse_loss(pred_b, gt_b, reduction="mean"))
+            elif loss_type == "cumsum":
+                pred_pos = pred_b.cumsum(dim=0)
+                gt_pos = gt_b.cumsum(dim=0)
+                losses.append(F.mse_loss(pred_pos, gt_pos, reduction="mean"))
+            else:
+                raise ValueError(f"Unknown action_spatial_loss_type: {loss_type}")
+
+        if not losses:
+            return None
+        return torch.stack(losses).mean()
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        labels = inputs.get("labels")
+        outputs = model(**inputs)
+        loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
+
+        spatial_weight = float(getattr(self.args, "action_spatial_loss_weight", 0.0))
+        if spatial_weight > 0.0 and labels is not None and hasattr(outputs, "logits"):
+            spatial_loss = self._compute_action_spatial_loss(outputs.logits, labels, model)
+            if spatial_loss is not None:
+                loss = loss + spatial_weight * spatial_loss
+
+        return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self):
         """
