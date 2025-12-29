@@ -21,9 +21,11 @@ class NuScenesVLAInferenceConfig:
     tokenizer_weights: str = "/home/x-mgagvani/vladiffusion/tokenizer/tokenizer_model.pth"
     unused_token_ids_path: str = "/home/x-mgagvani/vladiffusion/tokenizer/unused_token_ids.npy"
     conv_template: str = "llava_llada"
-    generation_steps: int = 10
+    generation_steps: int = 500
     generation_length: int = 10
     generation_block_length: int = 10
+    temperature: float = 0.5
+    remasking = 'low_confidence' # low_confidence / random / confidence_threshold
     stopping_criteria: tuple[str, ...] = ("<|eot_id|>",)
 
 

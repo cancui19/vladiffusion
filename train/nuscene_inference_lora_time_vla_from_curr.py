@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from peft import PeftModel
 from tqdm import tqdm
-from random import sample
+from random import sample, Random
 
 from llava.cache import dLLMCache, dLLMCacheConfig
 from llava.conversation import conv_templates
@@ -97,7 +97,8 @@ conv_template = config.conv_template
 inference_results = []
 
 N_points = 1000
-val_sample = sample(range(len(data_val)), N_points)
+rnd = Random(42)
+val_sample = rnd.sample(range(len(data_val)), N_points)
 data_val_sample = [data_val[i] for i in val_sample]
 
 # inference_results_len = len(inference_results)
@@ -148,6 +149,8 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
         block_length=config.generation_block_length,
         tokenizer=tokenizer,
         stopping_criteria=list(config.stopping_criteria),
+        temperature=config.temperature,
+        remasking=config.remasking
     )
     end_time = time.time()
     generation_time = end_time - start_time
