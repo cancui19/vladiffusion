@@ -480,11 +480,97 @@ class LLaVATrainer(Trainer):
         outputs = model(**inputs)
         loss = outputs.loss if hasattr(outputs, "loss") else outputs[0]
 
+        def _gather_action_logits_and_targets(logits: torch.Tensor, labels: torch.Tensor):
+            if not hasattr(model, "action_token_centers"):
+                return None, None
+            device = logits.device
+            action_ids = model.action_token_ids.to(device)
+            id_to_index = model.action_token_id_to_index.to(device)
+
+            labels_on_device = labels.to(device)
+            labels_safe = labels_on_device.clone()
+            labels_safe[labels_safe < 0] = 0
+            action_index = id_to_index[labels_safe]
+            action_mask = (labels_on_device >= 0) & (action_index >= 0)
+            if not action_mask.any():
+                return None, None
+
+            pad_id = getattr(self.tokenizer, "pad_token_id", None) if hasattr(self, "tokenizer") else None
+            logits_len = logits.shape[1]
+
+            gathered_logits = []
+            gathered_targets = []
+            for b in range(labels_on_device.shape[0]):
+                pos = action_mask[b].nonzero(as_tuple=True)[0]
+                if pos.numel() == 0:
+                    continue
+                if pad_id is not None:
+                    non_pad = labels_on_device[b] != pad_id
+                    if non_pad.any():
+                        effective_len = int(non_pad.nonzero(as_tuple=True)[0][-1].item()) + 1
+                    else:
+                        effective_len = labels_on_device.shape[1]
+                else:
+                    effective_len = labels_on_device.shape[1]
+
+                offset = logits_len - effective_len
+                if offset < 0:
+                    offset = 0
+                aligned = pos + offset
+                valid = aligned < logits_len
+                if not valid.any():
+                    continue
+                aligned = aligned[valid]
+                pos = pos[valid]
+
+                logits_b = logits[b, aligned][:, action_ids]  # (P, K)
+                targets_b = action_index[b, pos]
+                gathered_logits.append(logits_b)
+                gathered_targets.append(targets_b)
+
+            if not gathered_logits:
+                return None, None
+            logits_cat = torch.cat(gathered_logits, dim=0)
+            targets_cat = torch.cat(gathered_targets, dim=0)
+            return logits_cat, targets_cat
+
         spatial_weight = float(getattr(self.args, "action_spatial_loss_weight", 0.0))
         if spatial_weight > 0.0 and labels is not None and hasattr(outputs, "logits"):
             spatial_loss = self._compute_action_spatial_loss(outputs.logits, labels, model)
             if spatial_loss is not None:
                 loss = loss + spatial_weight * spatial_loss
+
+        # Optional focal loss on action tokens (auxiliary, gated by gamma > 0)
+        focal_gamma = float(getattr(self.args, "action_focal_gamma", 0.0))
+        if focal_gamma > 0.0 and labels is not None and hasattr(outputs, "logits"):
+            focal_alpha = float(getattr(self.args, "action_focal_alpha", 1.0))
+            logits_action, targets_action = _gather_action_logits_and_targets(outputs.logits, labels)
+            if logits_action is not None and targets_action is not None and targets_action.numel() > 0:
+                ce = F.cross_entropy(logits_action, targets_action, reduction="none")
+                pt = torch.exp(-ce)
+                focal = focal_alpha * ((1 - pt) ** focal_gamma) * ce
+                loss = loss + focal.mean()
+
+        # Optional soft spatial targets (KL to distance-smoothed labels)
+        if bool(getattr(self.args, "action_spatial_soft_labels", False)) and labels is not None and hasattr(outputs, "logits"):
+            logits_action, targets_action = _gather_action_logits_and_targets(outputs.logits, labels)
+            if logits_action is not None and targets_action is not None and targets_action.numel() > 0 and hasattr(model, "action_token_centers"):
+                centers = model.action_token_centers.to(logits_action.device)
+                temp = float(getattr(self.args, "action_spatial_soft_temperature", 1.0))
+                topk = int(getattr(self.args, "action_spatial_soft_topk", 0))
+                weight = float(getattr(self.args, "action_spatial_soft_weight", 1.0))
+
+                target_centers = centers[targets_action]  # (N, 2)
+                dists = torch.cdist(target_centers, centers)  # (N, K)
+                if topk > 0 and topk < centers.shape[0]:
+                    topk_vals, topk_idx = torch.topk(dists, topk, largest=False, dim=-1)
+                    mask = torch.full_like(dists, float("inf"))
+                    mask.scatter_(1, topk_idx, topk_vals)
+                    dists = mask
+                soft_targets = F.softmax(-dists / max(temp, 1e-6), dim=-1)
+                log_probs = F.log_softmax(logits_action, dim=-1)
+                kl = (soft_targets * (soft_targets.log() - log_probs)).sum(dim=-1)
+                loss = loss + weight * kl.mean()
 
         return (loss, outputs) if return_outputs else loss
 
