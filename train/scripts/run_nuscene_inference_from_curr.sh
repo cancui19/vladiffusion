@@ -9,7 +9,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=96
 #SBATCH --gres=gpu:1
-#SBATCH --time=12:00:00
+#SBATCH --time=6:00:00
 
 #SBATCH --output=exp/slurm-%x-%j.out
 #SBATCH --error=exp/slurm-%x-%j.err

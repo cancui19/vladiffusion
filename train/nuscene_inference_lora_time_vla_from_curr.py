@@ -139,32 +139,50 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
     input_ids = tokenizer_image_token(prompt_question, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(config.device)
     image_sizes = [image.size]
 
-    start_time = time.time()
-    cont = model.generate(
-        input_ids,
-        images=image_tensor,
-        image_sizes=image_sizes,
-        steps=config.generation_steps,
-        gen_length=config.generation_length,
-        block_length=config.generation_block_length,
-        tokenizer=tokenizer,
-        stopping_criteria=list(config.stopping_criteria),
-        temperature=config.temperature,
-        remasking=config.remasking
-    )
-    end_time = time.time()
-    generation_time = end_time - start_time
-    print(f"Generation time: {generation_time:.4f} seconds")
-    total_time += generation_time
+    best_res = None
+    best_confidence = -float("inf")
+
+    for gen_iter in range(4):
+
+        start_time = time.time()
+        torch.manual_seed(42 + gen_iter) # randomize each generation
+
+        cont, x0_p = model.generate(
+            input_ids,
+            images=image_tensor,
+            image_sizes=image_sizes,
+            steps=config.generation_steps,
+            gen_length=config.generation_length,
+            block_length=config.generation_block_length,
+            tokenizer=tokenizer,
+            stopping_criteria=list(config.stopping_criteria),
+            temperature=config.temperature,
+            remasking=config.remasking,
+            return_confidence = True
+        )
+
+        # mean confidence
+        # TODO: investigate whether choosing the individual most 
+        # confident token at each index would be better??
+        mean_confidence = x0_p.mean().item()
+        print(f"Mean confidence {gen_iter}: {mean_confidence:.4f}")
+
+        if mean_confidence > best_confidence:
+            best_confidence = mean_confidence
+            best_res = cont
+
+        end_time = time.time()
+        generation_time = end_time - start_time
+        print(f"Generation time {gen_iter}: {generation_time:.4f} seconds")
+        total_time += generation_time
+
+    cont = best_res
 
     # print(cont)
-    from pathlib import Path
-    from tokenizer.example_usage import load_point_tokenizer
     weights_file = Path(config.tokenizer_weights)
     if not weights_file.exists():
         raise FileNotFoundError()
 
-    point_tokenizer = load_point_tokenizer(weights_file)
     ids_tensor = torch.from_numpy(np.load(config.unused_token_ids_path)).to(config.device)
     pos_in_sorted = torch.searchsorted(-ids_tensor, -cont.flatten())      
     recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)

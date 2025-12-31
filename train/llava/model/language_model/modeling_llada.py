@@ -1301,7 +1301,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
     @torch.no_grad()
     def generate_with_embeds(self, inputs_embeds, steps=128, gen_length=128, block_length=128, temperature=0.,
-        cfg_scale=0., remasking='low_confidence', mask_id=126336, tokenizer=None, stopping_criteria=None, generation_suffix=None, confidence_threshold=0.9,verbose=False, **kwargs):
+        cfg_scale=0., remasking='low_confidence', mask_id=126336, tokenizer=None, stopping_criteria=None, generation_suffix=None, confidence_threshold=0.9,verbose=False, return_confidence=False, **kwargs):
         '''
         Args:
             inputs_embeds: A tensor of shape (1, l, d).
@@ -1368,6 +1368,14 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
             feature_cache = dLLMCache()
             feature_cache.reset_cache(inputs_embeds.shape[1])
+
+            if return_confidence:
+                conf_final = torch.full(
+                    (1, total_length),
+                    -float("inf"),
+                    device=inputs_embeds.device,
+                    dtype=torch.float32,
+                )
             for num_block in range(num_blocks):
                 # Create mask index for the current block
                 block_start = inputs_embeds.shape[1] + num_block * block_length
@@ -1548,10 +1556,13 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                     # transfer_time = transfer_time_end - transfer_time_start
                     # print(f"Transfer time: {transfer_time:.4f} seconds")
                     # print(f"{is_confident.sum()}")
-                    
+
                     # Update embeddings and token IDs
                     x_embeds[transfer_index] = x0_embeds[transfer_index]
                     x[transfer_index] = x0[transfer_index]
+
+                    if return_confidence:
+                        conf_final[transfer_index] = x0_p[transfer_index]
                     # time_end = time.time()
                     # generation_time = time_end - time_start
                     # total_time_end_event.record()
@@ -1599,19 +1610,39 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
             # Return the generated result, up to stop_position, and append the suffix
             if found_stop_seq:
                 if suffix_len > 0:
+                    if return_confidence:
+                        return torch.cat([
+                            x[:, inputs_embeds.shape[1]:stop_position], 
+                            x[:, -suffix_len:]
+                        ], dim=1), torch.cat([
+                            conf_final[:, inputs_embeds.shape[1]:stop_position],
+                            conf_final[:, -suffix_len:]
+                        ], dim=1)
                     return torch.cat([
                         x[:, inputs_embeds.shape[1]:stop_position], 
                         x[:, -suffix_len:]
                     ], dim=1)
                 else:
+                    if return_confidence:
+                        return x[:, inputs_embeds.shape[1]:stop_position], conf_final[:, inputs_embeds.shape[1]:stop_position]
                     return x[:, inputs_embeds.shape[1]:stop_position]
             else:
                 if suffix_len > 0:
+                    if return_confidence:
+                        return torch.cat([
+                        x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], 
+                        x[:, -suffix_len:]
+                    ], dim=1), torch.cat([
+                        conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length],
+                        conf_final[:, -suffix_len:]
+                    ], dim=1)
                     return torch.cat([
                         x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], 
                         x[:, -suffix_len:]
                     ], dim=1)
                 else:
+                    if return_confidence:
+                        return x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
                     return x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
 
 
