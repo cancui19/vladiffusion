@@ -140,14 +140,14 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
     image_sizes = [image.size]
 
     best_res = None
-    best_confidence = -float("inf")
+    best_logprobs = -float("inf")
 
     for gen_iter in range(4):
 
         start_time = time.time()
         torch.manual_seed(42 + gen_iter) # randomize each generation
 
-        cont, x0_p = model.generate(
+        cont, logprobs = model.generate(
             input_ids,
             images=image_tensor,
             image_sizes=image_sizes,
@@ -158,17 +158,15 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
             stopping_criteria=list(config.stopping_criteria),
             temperature=config.temperature,
             remasking=config.remasking,
-            return_confidence = True
+            return_logprob = True
         )
 
-        # mean confidence
-        # TODO: investigate whether choosing the individual most 
-        # confident token at each index would be better??
-        mean_confidence = x0_p.mean().item()
-        print(f"Mean confidence {gen_iter}: {mean_confidence:.4f}")
+        # mean logprobs
+        mean_logprobs = logprobs.mean().item()
+        print(f"Mean logprobs {gen_iter}: {mean_logprobs:.4f}")
 
-        if mean_confidence > best_confidence:
-            best_confidence = mean_confidence
+        if mean_logprobs > best_logprobs:
+            best_logprobs = mean_logprobs
             best_res = cont
 
         end_time = time.time()

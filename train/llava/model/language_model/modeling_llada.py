@@ -1301,7 +1301,7 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 
     @torch.no_grad()
     def generate_with_embeds(self, inputs_embeds, steps=128, gen_length=128, block_length=128, temperature=0.,
-        cfg_scale=0., remasking='low_confidence', mask_id=126336, tokenizer=None, stopping_criteria=None, generation_suffix=None, confidence_threshold=0.9,verbose=False, return_confidence=False, **kwargs):
+        cfg_scale=0., remasking='low_confidence', mask_id=126336, tokenizer=None, stopping_criteria=None, generation_suffix=None, confidence_threshold=0.9,verbose=False, return_confidence=False, return_logprob=False, **kwargs):
         '''
         Args:
             inputs_embeds: A tensor of shape (1, l, d).
@@ -1313,7 +1313,11 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
             remasking: Remasking strategy. 'low_confidence' or 'random'.
             mask_id: The toke id of [MASK] is 126336.
             generation_suffix: (str or None) Generation suffix, such as "The answer is xxx", will be appended to the end
+            return_logprob: If True, return per-token logprobs aligned with the returned tokens.
         '''
+        if return_confidence and return_logprob:
+            raise ValueError("Set only one of return_confidence or return_logprob.")
+
         # Use mixed precision for faster computation
         with torch.cuda.amp.autocast(enabled=True):
             # Handle generation suffix
@@ -1608,42 +1612,61 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                                 break
 
             # Return the generated result, up to stop_position, and append the suffix
+            token_logprobs = None
+            if return_logprob:
+                outputs = self.model(inputs_embeds=x_embeds)
+                logits = self.lm_head(outputs[0]).float()
+                log_probs = F.log_softmax(logits, dim=-1)
+                token_logprobs = torch.gather(log_probs, dim=-1, index=x.unsqueeze(-1)).squeeze(-1)
+
             if found_stop_seq:
                 if suffix_len > 0:
-                    if return_confidence:
-                        return torch.cat([
-                            x[:, inputs_embeds.shape[1]:stop_position], 
-                            x[:, -suffix_len:]
-                        ], dim=1), torch.cat([
-                            conf_final[:, inputs_embeds.shape[1]:stop_position],
-                            conf_final[:, -suffix_len:]
-                        ], dim=1)
-                    return torch.cat([
+                    tokens_out = torch.cat([
                         x[:, inputs_embeds.shape[1]:stop_position], 
                         x[:, -suffix_len:]
                     ], dim=1)
-                else:
+                    if return_logprob:
+                        return tokens_out, torch.cat([
+                            token_logprobs[:, inputs_embeds.shape[1]:stop_position],
+                            token_logprobs[:, -suffix_len:]
+                        ], dim=1)
                     if return_confidence:
-                        return x[:, inputs_embeds.shape[1]:stop_position], conf_final[:, inputs_embeds.shape[1]:stop_position]
-                    return x[:, inputs_embeds.shape[1]:stop_position]
+                        return tokens_out, torch.cat([
+                            conf_final[:, inputs_embeds.shape[1]:stop_position],
+                            conf_final[:, -suffix_len:]
+                        ], dim=1)
+                    return tokens_out
+                else:
+                    tokens_out = x[:, inputs_embeds.shape[1]:stop_position]
+                    if return_logprob:
+                        return tokens_out, token_logprobs[:, inputs_embeds.shape[1]:stop_position]
+                    if return_confidence:
+                        return tokens_out, conf_final[:, inputs_embeds.shape[1]:stop_position]
+                    return tokens_out
             else:
                 if suffix_len > 0:
+                    tokens_out = torch.cat([
+                        x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], 
+                        x[:, -suffix_len:]
+                    ], dim=1)
+                    if return_logprob:
+                        return tokens_out, torch.cat([
+                            token_logprobs[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length],
+                            token_logprobs[:, -suffix_len:]
+                        ], dim=1)
                     if return_confidence:
-                        return torch.cat([
-                        x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], 
-                        x[:, -suffix_len:]
-                    ], dim=1), torch.cat([
-                        conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length],
-                        conf_final[:, -suffix_len:]
-                    ], dim=1)
-                    return torch.cat([
-                        x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], 
-                        x[:, -suffix_len:]
-                    ], dim=1)
+                        return tokens_out, torch.cat([
+                            conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length],
+                            conf_final[:, -suffix_len:]
+                        ], dim=1)
+                    return tokens_out
                 else:
+                    tokens_out = x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
+                    if return_logprob:
+                        return tokens_out, token_logprobs[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
                     if return_confidence:
-                        return x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length], conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
-                    return x[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
+                        return tokens_out, conf_final[:, inputs_embeds.shape[1]:inputs_embeds.shape[1]+gen_length]
+                    return tokens_out
 
 
     @torch.no_grad()
