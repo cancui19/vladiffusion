@@ -210,6 +210,7 @@ class TrainingArguments(transformers.TrainingArguments):
     use_conversation_mask: bool=field(default=True)
     action_spatial_loss_weight: float = field(default=0.0, metadata={"help": "Weight for spatial loss on action tokens."})
     action_spatial_loss_type: str = field(default="delta", metadata={"help": "Spatial loss type: delta or cumsum."})
+    action_spatial_loss_use_ste: bool = field(default=False, metadata={"help": "Use straight-through estimator for spatial loss (hard token selection, soft gradients)."})
     action_focal_gamma: float = field(default=0.0, metadata={"help": "Focal loss gamma for action tokens. 0 disables focal."})
     action_focal_alpha: float = field(default=1.0, metadata={"help": "Focal loss alpha scaling for action tokens."})
     action_spatial_soft_labels: bool = field(default=False, metadata={"help": "Use distance-based soft labels for action tokens."})

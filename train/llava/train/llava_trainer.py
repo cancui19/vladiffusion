@@ -429,6 +429,10 @@ class LLaVATrainer(Trainer):
         logits = logits.to(labels_device)
         logits_action = logits[:, :, action_ids]
         probs = torch.softmax(logits_action, dim=-1)
+        if bool(getattr(self.args, "action_spatial_loss_use_ste", False)):
+            hard_idx = probs.argmax(dim=-1)
+            hard = F.one_hot(hard_idx, num_classes=probs.shape[-1]).type_as(probs)
+            probs = probs + (hard - probs).detach()
         action_centers = action_centers.to(dtype=probs.dtype)
         pred_delta = torch.einsum("bsk,kd->bsd", probs, action_centers)
 

@@ -142,7 +142,7 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
     best_res = None
     best_logprobs = -float("inf")
 
-    for gen_iter in range(4):
+    for gen_iter in range(1): # this doesn't improve performance
 
         start_time = time.time()
         torch.manual_seed(42 + gen_iter) # randomize each generation

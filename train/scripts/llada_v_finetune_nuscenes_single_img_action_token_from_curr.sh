@@ -127,6 +127,7 @@ deepspeed --num_gpus=${gpu_num} \
     --action_balance_power 1.0 \
     --action_spatial_loss_weight 0.1 \
     --action_spatial_loss_type cumsum \
+    --action_spatial_loss_use_ste True \
     --action_focal_gamma 2.0 \
     --action_focal_alpha 1.0 \
     --action_spatial_soft_labels True \

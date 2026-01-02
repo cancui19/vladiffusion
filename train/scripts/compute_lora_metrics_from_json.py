@@ -2,7 +2,7 @@ import json, ast, torch
 
 from train.nuscene_inference_lora_metrics import compute_displacement_errors
 
-path = "results/vla_20251229_1244.json"
+path = "results/vla_20260101_1621.json"
 DELTA = True
 
 
