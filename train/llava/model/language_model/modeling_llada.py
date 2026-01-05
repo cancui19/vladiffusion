@@ -1679,10 +1679,24 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
                     
                     logits, un_logits = torch.chunk(logits, 2, dim=0)
                     logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+                    del outputs
                 else:
                     outputs = self.model(inputs_embeds=x_embeds)
                     logits = self.lm_head(outputs[0]).float()
-                del outputs
+                    del outputs
+                
+                # Restrict first 10 positions of template to only allow action tokens
+                global model_action_token_ids
+                if model_action_token_ids is None:
+                    from train.llava.train.train import model_action_token_ids
+                if model_action_token_ids is not None:
+                    blocked = torch.ones(logits.size(-1), dtype=torch.bool, device=logits.device)
+                    blocked[model_action_token_ids] = False
+                    very_neg = torch.finfo(logits.dtype).min
+                    # Only restrict the first 10 positions of the template (action token positions)
+                    action_index = torch.zeros_like(x_ids, dtype=torch.bool)
+                    action_index[:, prompt_len:prompt_len + 10] = current_mask[:, prompt_len:prompt_len + 10]
+                    logits.masked_fill_(action_index.unsqueeze(-1) & blocked, very_neg)
                 
                 logits_with_noise = self.add_gumbel_noise(logits, temperature=temperature)
                 x0 = torch.argmax(logits_with_noise, dim=-1)

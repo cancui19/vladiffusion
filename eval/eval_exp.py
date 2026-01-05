@@ -2,6 +2,7 @@ import json
 import re
 from typing import Dict, Optional
 import evaluate
+from pycocoevalcap.cider.cider import Cider
 
 bleu_metric = evaluate.load("bleu")
 rouge_metric = evaluate.load("rouge")
@@ -18,6 +19,14 @@ total_meteor_reasoning_score = 0
 total_bleu_combined_score = 0
 total_rouge_combined_score = 0
 total_meteor_combined_score = 0
+
+# Containers for CIDEr (Corpus-level)
+narration_preds = {}
+narration_refs = {}
+reasoning_preds = {}
+reasoning_refs = {}
+combined_preds = {}
+combined_refs = {}
 
 COUNT_MISSING = False
 missing_narration_count = 0
@@ -68,10 +77,14 @@ def _strip_coords(text: str) -> str:
     return text
 
 
-with open('/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_result.json', 'r') as f:
+# with open('/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_result.json', 'r') as f:
+with open('/depot/ziran/apps/jiaru/projects/vladiffusion/results/iterative_refinement/iter_5.json', 'r') as f:
     exp = json.load(f)
 
-for item in exp:
+for idx, item in enumerate(exp):
+    # Unique ID for this sample
+    sample_id = str(idx)
+    
     # Fix: Handle item[1] being a string or a list
     raw_output = item[1] if len(item) > 1 else []
     if isinstance(raw_output, str):
@@ -128,7 +141,7 @@ for item in exp:
             
     # Narration Evaluation
     if narration is not None and narration_gt is not None:
-        narration_bleu = bleu_metric.compute(predictions=[narration], references=[narration_gt])['bleu']
+        narration_bleu = bleu_metric.compute(predictions=[narration], references=[[narration_gt]])['bleu']
         narration_rouge = rouge_metric.compute(predictions=[narration], references=[narration_gt])['rougeL']
         narration_meteor = meteor_metric.compute(predictions=[narration], references=[narration_gt])['meteor']
         print(f"Narration BLEU: {narration_bleu}")
@@ -138,12 +151,15 @@ for item in exp:
         total_rouge_narration_score += narration_rouge
         total_meteor_narration_score += narration_meteor
         narration_count += 1
+        # CIDEr: refs/preds need list-of-strings per id
+        narration_preds[sample_id] = [narration]
+        narration_refs[sample_id] = [narration_gt]
     else:
         missing_narration_count += 1
 
     # Reasoning Evaluation
     if reasoning is not None and reasoning_gt is not None:
-        reasoning_bleu = bleu_metric.compute(predictions=[reasoning], references=[reasoning_gt])['bleu']
+        reasoning_bleu = bleu_metric.compute(predictions=[reasoning], references=[[reasoning_gt]])['bleu']
         reasoning_rouge = rouge_metric.compute(predictions=[reasoning], references=[reasoning_gt])['rougeL']
         reasoning_meteor = meteor_metric.compute(predictions=[reasoning], references=[reasoning_gt])['meteor']
         print(f"Reasoning BLEU: {reasoning_bleu}")
@@ -153,6 +169,8 @@ for item in exp:
         total_rouge_reasoning_score += reasoning_rouge
         total_meteor_reasoning_score += reasoning_meteor
         reasoning_count += 1
+        reasoning_preds[sample_id] = [reasoning]
+        reasoning_refs[sample_id] = [reasoning_gt]
     else:
         missing_reasoning_count += 1
 
@@ -168,7 +186,7 @@ for item in exp:
     gt_combined = gt_raw.strip()
     
     if pred_combined and gt_combined:
-        combined_bleu = bleu_metric.compute(predictions=[pred_combined], references=[gt_combined])['bleu']
+        combined_bleu = bleu_metric.compute(predictions=[pred_combined], references=[[gt_combined]])['bleu']
         combined_rouge = rouge_metric.compute(predictions=[pred_combined], references=[gt_combined])['rougeL']
         combined_meteor = meteor_metric.compute(predictions=[pred_combined], references=[gt_combined])['meteor']
         print(f"Combined BLEU: {combined_bleu}")
@@ -178,12 +196,37 @@ for item in exp:
         total_rouge_combined_score += combined_rouge
         total_meteor_combined_score += combined_meteor
         combined_count += 1
+        combined_preds[sample_id] = [pred_combined]
+        combined_refs[sample_id] = [gt_combined]
 
 print("missing narration count:", missing_narration_count)
 print("missing reasoning count:", missing_reasoning_count)
 print("narration count:", narration_count)
 print("reasoning count:", reasoning_count)
 print("combined count:", combined_count)
+
+# CIDEr Calculation
+cider_scorer = Cider()
+
+print("\n--- Computing CIDEr Scores ---")
+
+if narration_preds:
+    score, scores = cider_scorer.compute_score(narration_refs, narration_preds)
+    print(f"Narration CIDEr: {score}")
+else:
+    print("Narration CIDEr: N/A")
+
+if reasoning_preds:
+    score, scores = cider_scorer.compute_score(reasoning_refs, reasoning_preds)
+    print(f"Reasoning CIDEr: {score}")
+else:
+    print("Reasoning CIDEr: N/A")
+
+if combined_preds:
+    score, scores = cider_scorer.compute_score(combined_refs, combined_preds)
+    print(f"Combined CIDEr: {score}")
+else:
+    print("Combined CIDEr: N/A")
 
 if narration_count > 0:
     print("average bleu narration score:", total_bleu_narration_score / narration_count)

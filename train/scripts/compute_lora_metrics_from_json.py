@@ -9,7 +9,7 @@ sys.path.append(os.getcwd())
 
 from train.nuscene_inference_lora_metrics import compute_displacement_errors
 
-path = "/depot/ziran/apps/jiaru/projects/vladiffusion/results/vla_explanation_result.json"
+path = "/depot/ziran/apps/jiaru/projects/vladiffusion/results/iterative_refinement/iter_5.json"
 
 def extract_trajectory(text):
     """
