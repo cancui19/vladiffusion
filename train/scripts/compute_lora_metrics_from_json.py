@@ -2,7 +2,7 @@ import json, ast, torch
 
 from train.nuscene_inference_lora_metrics import compute_displacement_errors
 
-path = "results/vla_20260101_1621.json"
+path = "results/vla_20260116_1636.json"
 DELTA = True
 
 
@@ -25,7 +25,7 @@ def compute_metric(entries, steps=10, specific=None):
         min_idx = steps - 1
         max_idx = steps
 
-    for pred_str, gt_str in entries:
+    for pred_str, gt_str, _ in entries:
         # 字符串转成真正的 [N, 2] 数组
         pred = torch.tensor(ast.literal_eval("[" + pred_str.strip().strip(",") + "]"), dtype=torch.float32)
         gt = torch.tensor(ast.literal_eval("[" + gt_str.strip().strip(",") + "]"), dtype=torch.float32)

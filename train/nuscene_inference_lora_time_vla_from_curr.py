@@ -182,14 +182,22 @@ for i, data_sample in tqdm(enumerate(data_val_sample), total=N_points):
         raise FileNotFoundError()
 
     ids_tensor = torch.from_numpy(np.load(config.unused_token_ids_path)).to(config.device)
-    pos_in_sorted = torch.searchsorted(-ids_tensor, -cont.flatten())      
-    recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)
+    # Filter only tokens that are in the action token set to avoid IndexError from text tokens
+    flat_cont = cont.flatten()
+    mask = torch.isin(flat_cont, ids_tensor)
+    action_tokens = flat_cont[mask]
+    
+    if action_tokens.numel() > 0:
+        pos_in_sorted = torch.searchsorted(-ids_tensor, -action_tokens)
+        recovered_point = point_tokenizer.indices_to_points(pos_in_sorted)
+    else:
+        recovered_point = torch.tensor([]).to(config.device)
     
     text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=False)
     print(text_outputs)
     print(recovered_point)
 
-    inference_results.append([str(recovered_point.tolist())[1:-1], data_sample['conversations'][1]['value']])
+    inference_results.append([str(recovered_point.tolist())[1:-1], data_sample['conversations'][1]['value'], text_outputs])
 
 # with open(f'/home/cancui/Research/LLaDA-V/data/nuscenes_drive_data_single_image_val_inference_{config.job_name}.json', 'w') as f:
 with open(config.results_path, 'w') as f:
